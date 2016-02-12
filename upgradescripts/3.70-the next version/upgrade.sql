@@ -218,6 +218,12 @@ set @resources='
   <LocaleResource Name="Enums.Nop.Core.Domain.Messages.MessageDelayPeriod.Hours">
     <Value>Hours</Value>
   </LocaleResource>
+  <LocaleResource Name="Admin.ContentManagement.Topics.Fields.Published">
+    <Value>Published</Value>
+  </LocaleResource>
+  <LocaleResource Name="Admin.ContentManagement.Topics.Fields.Published.Hint">
+    <Value>Determines whether this topic is published (visible) in your store.</Value>
+  </LocaleResource>
 </Language>
 '
 
@@ -483,4 +489,20 @@ WHERE [DelayPeriodId] IS NULL
 GO
 
 ALTER TABLE [MessageTemplate] ALTER COLUMN [DelayPeriodId] int NOT NULL
+GO
+
+--new column
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id=object_id('[Topic]') and NAME='Published')
+BEGIN
+	ALTER TABLE [Topic]
+	ADD [Published] bit NULL
+END
+GO
+
+UPDATE [Topic]
+SET [Published] = 1
+WHERE [Published] IS NULL
+GO
+
+ALTER TABLE [Topic] ALTER COLUMN [Published] bit NOT NULL
 GO
