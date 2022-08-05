@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 
 namespace Nop.Core.Domain.Orders
 {
@@ -13,7 +13,7 @@ namespace Nop.Core.Domain.Orders
         public int RecurringPaymentId { get; set; }
 
         /// <summary>
-        /// Gets or sets the recurring payment identifier
+        /// Gets or sets the order identifier
         /// </summary>
         public int OrderId { get; set; }
         
@@ -21,11 +21,5 @@ namespace Nop.Core.Domain.Orders
         /// Gets or sets the date and time of entity creation
         /// </summary>
         public DateTime CreatedOnUtc { get; set; }
-        
-        /// <summary>
-        /// Gets the recurring payment
-        /// </summary>
-        public virtual RecurringPayment RecurringPayment { get; set; }
-
     }
 }

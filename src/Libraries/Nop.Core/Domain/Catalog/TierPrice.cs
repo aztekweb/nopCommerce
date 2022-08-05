@@ -1,4 +1,4 @@
-using Nop.Core.Domain.Customers;
+﻿using System;
 
 namespace Nop.Core.Domain.Catalog
 {
@@ -33,13 +33,13 @@ namespace Nop.Core.Domain.Catalog
         public decimal Price { get; set; }
 
         /// <summary>
-        /// Gets or sets the product
+        /// Gets or sets the start date and time in UTC
         /// </summary>
-        public virtual Product Product { get; set; }
+        public DateTime? StartDateTimeUtc { get; set; }
 
         /// <summary>
-        /// Gets or sets the customer role
+        /// Gets or sets the end date and time in UTC
         /// </summary>
-        public virtual CustomerRole CustomerRole { get; set; }
+        public DateTime? EndDateTimeUtc { get; set; }
     }
 }

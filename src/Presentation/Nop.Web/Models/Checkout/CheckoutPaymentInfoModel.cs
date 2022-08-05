@@ -1,13 +1,11 @@
-﻿using System.Web.Routing;
-using Nop.Web.Framework.Mvc;
+﻿using System;
+using Nop.Web.Framework.Models;
 
 namespace Nop.Web.Models.Checkout
 {
-    public partial class CheckoutPaymentInfoModel : BaseNopModel
+    public partial record CheckoutPaymentInfoModel : BaseNopModel
     {
-        public string PaymentInfoActionName { get; set; }
-        public string PaymentInfoControllerName { get; set; }
-        public RouteValueDictionary PaymentInfoRouteValues { get; set; }
+        public Type PaymentViewComponent { get; set; }
 
         /// <summary>
         /// Used on one-page checkout page

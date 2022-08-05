@@ -1,5 +1,4 @@
-
-namespace Nop.Services.Helpers
+﻿namespace Nop.Services.Helpers
 {
     /// <summary>
     /// User agent helper interface
@@ -11,5 +10,11 @@ namespace Nop.Services.Helpers
         /// </summary>
         /// <returns>Result</returns>
         bool IsSearchEngine();
+
+        /// <summary>
+        /// Get a value indicating whether the request is made by mobile device
+        /// </summary>
+        /// <returns></returns>
+        bool IsMobileDevice();
     }
 }

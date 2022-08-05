@@ -1,13 +1,15 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Linq;
+using System.Threading.Tasks;
+using Nop.Core;
 using Nop.Core.Caching;
-using Nop.Core.Data;
 using Nop.Core.Domain.Catalog;
-using Nop.Core.Domain.Common;
 using Nop.Data;
-using Nop.Services.Events;
+using Nop.Services.Customers;
+using Nop.Services.Security;
+using Nop.Services.Seo;
+using Nop.Services.Stores;
 
 namespace Nop.Services.Catalog
 {
@@ -16,133 +18,109 @@ namespace Nop.Services.Catalog
     /// </summary>
     public partial class ProductTagService : IProductTagService
     {
-        #region Constants
-
-        /// <summary>
-        /// Key for caching
-        /// </summary>
-        /// <remarks>
-        /// {0} : store ID
-        /// </remarks>
-        private const string PRODUCTTAG_COUNT_KEY = "Nop.producttag.count-{0}";
-
-        /// <summary>
-        /// Key pattern to clear cache
-        /// </summary>
-        private const string PRODUCTTAG_PATTERN_KEY = "Nop.producttag.";
-
-        #endregion
-
         #region Fields
 
+        private readonly IAclService _aclService;
+        private readonly ICustomerService _customerService;
+        private readonly IRepository<Product> _productRepository;
+        private readonly IRepository<ProductProductTagMapping> _productProductTagMappingRepository;
         private readonly IRepository<ProductTag> _productTagRepository;
-        private readonly IDataProvider _dataProvider;
-        private readonly IDbContext _dbContext;
-        private readonly CommonSettings _commonSettings;
-        private readonly ICacheManager _cacheManager;
-        private readonly IEventPublisher _eventPublisher;
+        private readonly IStaticCacheManager _staticCacheManager;
+        private readonly IStoreMappingService _storeMappingService;
+        private readonly IUrlRecordService _urlRecordService;
+        private readonly IWorkContext _workContext;
 
         #endregion
 
         #region Ctor
 
-        /// <summary>
-        /// Ctor
-        /// </summary>
-        /// <param name="productTagRepository">Product tag repository</param>
-        /// <param name="dataProvider">Data provider</param>
-        /// <param name="dbContext">Database Context</param>
-        /// <param name="commonSettings">Common settings</param>
-        /// <param name="cacheManager">Cache manager</param>
-        /// <param name="eventPublisher">Event published</param>
-        public ProductTagService(IRepository<ProductTag> productTagRepository,
-            IDataProvider dataProvider, 
-            IDbContext dbContext,
-            CommonSettings commonSettings,
-            ICacheManager cacheManager,
-            IEventPublisher eventPublisher)
+        public ProductTagService(
+            IAclService aclService,
+            ICustomerService customerService,
+            IRepository<Product> productRepository,
+            IRepository<ProductProductTagMapping> productProductTagMappingRepository,
+            IRepository<ProductTag> productTagRepository,
+            IStaticCacheManager staticCacheManager,
+            IStoreMappingService storeMappingService,
+            IUrlRecordService urlRecordService,
+            IWorkContext workContext)
         {
-            this._productTagRepository = productTagRepository;
-            this._dataProvider = dataProvider;
-            this._dbContext = dbContext;
-            this._commonSettings = commonSettings;
-            this._cacheManager = cacheManager;
-            this._eventPublisher = eventPublisher;
+            _aclService = aclService;
+            _customerService = customerService;
+            _productRepository = productRepository;
+            _productProductTagMappingRepository = productProductTagMappingRepository;
+            _productTagRepository = productTagRepository;
+            _staticCacheManager = staticCacheManager;
+            _storeMappingService = storeMappingService;
+            _urlRecordService = urlRecordService;
+            _workContext = workContext;
         }
 
         #endregion
 
-        #region Nested classes
-
-        private class ProductTagWithCount
-        {
-            public int ProductTagId { get; set; }
-            public int ProductCount { get; set; }
-        }
-
-        #endregion
-        
         #region Utilities
 
         /// <summary>
-        /// Get product count for each of existing product tag
+        /// Delete a product-product tag mapping
         /// </summary>
-        /// <param name="storeId">Store identifier</param>
-        /// <returns>Dictionary of "product tag ID : product count"</returns>
-        private Dictionary<int, int> GetProductCount(int storeId)
+        /// <param name="productId">Product identifier</param>
+        /// <param name="productTagId">Product tag identifier</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        protected virtual async Task DeleteProductProductTagMappingAsync(int productId, int productTagId)
         {
-            string key = string.Format(PRODUCTTAG_COUNT_KEY, storeId);
-            return _cacheManager.Get(key, () =>
-            {
+            var mappingRecord = await _productProductTagMappingRepository.Table
+                .FirstOrDefaultAsync(pptm => pptm.ProductId == productId && pptm.ProductTagId == productTagId);
 
-                if (_commonSettings.UseStoredProceduresIfSupported && _dataProvider.StoredProceduredSupported)
-                {
-                    //stored procedures are enabled and supported by the database. 
-                    //It's much faster than the LINQ implementation below 
+            if (mappingRecord is null)
+                throw new Exception("Mapping record not found");
 
-                    #region Use stored procedure
+            await _productProductTagMappingRepository.DeleteAsync(mappingRecord);
+        }
 
-                    //prepare parameters
-                    var pStoreId = _dataProvider.GetParameter();
-                    pStoreId.ParameterName = "StoreId";
-                    pStoreId.Value = storeId;
-                    pStoreId.DbType = DbType.Int32;
+        /// <summary>
+        /// Indicates whether a product tag exists
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <param name="productTagId">Product tag identifier</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the result
+        /// </returns>
+        protected virtual async Task<bool> ProductTagExistsAsync(Product product, int productTagId)
+        {
+            if (product == null)
+                throw new ArgumentNullException(nameof(product));
 
+            return await _productProductTagMappingRepository.Table
+                .AnyAsync(pptm => pptm.ProductId == product.Id && pptm.ProductTagId == productTagId);
+        }
 
-                    //invoke stored procedure
-                    var result = _dbContext.SqlQuery<ProductTagWithCount>(
-                        "Exec ProductTagCountLoadAll @StoreId",
-                        pStoreId);
+        /// <summary>
+        /// Gets product tag by name
+        /// </summary>
+        /// <param name="name">Product tag name</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the product tag
+        /// </returns>
+        protected virtual async Task<ProductTag> GetProductTagByNameAsync(string name)
+        {
+            var query = from pt in _productTagRepository.Table
+                where pt.Name == name
+                select pt;
 
-                    var dictionary = new Dictionary<int, int>();
-                    foreach (var item in result)
-                        dictionary.Add(item.ProductTagId, item.ProductCount);
-                    return dictionary;
+            var productTag = await query.FirstOrDefaultAsync();
+            return productTag;
+        }
 
-                    #endregion
-                }
-                else
-                {
-                    //stored procedures aren't supported. Use LINQ
-                    #region Search products
-                    var query = from pt in _productTagRepository.Table
-                                select new
-                                {
-                                    Id = pt.Id,
-                                    ProductCount = pt.Products
-                                        //published and not deleted products
-                                        .Count(p => !p.Deleted && p.Published)
-                                };
-
-                    var dictionary = new Dictionary<int, int>();
-                    foreach (var item in query)
-                        dictionary.Add(item.Id, item.ProductCount);
-                    return dictionary;
-
-                    #endregion
-
-                }
-            });
+        /// <summary>
+        /// Inserts a product tag
+        /// </summary>
+        /// <param name="productTag">Product tag</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        protected virtual async Task InsertProductTagAsync(ProductTag productTag)
+        {
+            await _productTagRepository.InsertAsync(productTag);
         }
 
         #endregion
@@ -153,108 +131,243 @@ namespace Nop.Services.Catalog
         /// Delete a product tag
         /// </summary>
         /// <param name="productTag">Product tag</param>
-        public virtual void DeleteProductTag(ProductTag productTag)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteProductTagAsync(ProductTag productTag)
         {
-            if (productTag == null)
-                throw new ArgumentNullException("productTag");
+            await _productTagRepository.DeleteAsync(productTag);
+        }
 
-            _productTagRepository.Delete(productTag);
+        /// <summary>
+        /// Delete product tags
+        /// </summary>
+        /// <param name="productTags">Product tags</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteProductTagsAsync(IList<ProductTag> productTags)
+        {
+            if (productTags == null)
+                throw new ArgumentNullException(nameof(productTags));
 
-            //cache
-            _cacheManager.RemoveByPattern(PRODUCTTAG_PATTERN_KEY);
-
-            //event notification
-            _eventPublisher.EntityDeleted(productTag);
+            foreach (var productTag in productTags)
+                await DeleteProductTagAsync(productTag);
         }
 
         /// <summary>
         /// Gets all product tags
         /// </summary>
-        /// <returns>Product tags</returns>
-        public virtual IList<ProductTag> GetAllProductTags()
+        /// <param name="tagName">Tag name</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the product tags
+        /// </returns>
+        public virtual async Task<IList<ProductTag>> GetAllProductTagsAsync(string tagName = null)
         {
-            var query = _productTagRepository.Table;
-            var productTags = query.ToList();
-            return productTags;
+            var allProductTags = await _productTagRepository.GetAllAsync(query => query, getCacheKey: cache => default);
+
+            if (!string.IsNullOrEmpty(tagName))
+                allProductTags = allProductTags.Where(tag => tag.Name.Contains(tagName)).ToList();
+
+            return allProductTags;
+        }
+
+        /// <summary>
+        /// Gets all product tags by product identifier
+        /// </summary>
+        /// <param name="productId">Product identifier</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the product tags
+        /// </returns>
+        public virtual async Task<IList<ProductTag>> GetAllProductTagsByProductIdAsync(int productId)
+        {
+            var key = _staticCacheManager.PrepareKeyForDefaultCache(NopCatalogDefaults.ProductTagsByProductCacheKey, productId);
+
+            return await _staticCacheManager.GetAsync(key, async () =>
+            {
+                var tagMapping = from ptm in _productProductTagMappingRepository.Table
+                                 join pt in _productTagRepository.Table on ptm.ProductTagId equals pt.Id
+                                 where ptm.ProductId == productId
+                                 orderby pt.Id
+                                 select pt;
+
+                return await tagMapping.ToListAsync();
+            });
         }
 
         /// <summary>
         /// Gets product tag
         /// </summary>
         /// <param name="productTagId">Product tag identifier</param>
-        /// <returns>Product tag</returns>
-        public virtual ProductTag GetProductTagById(int productTagId)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the product tag
+        /// </returns>
+        public virtual async Task<ProductTag> GetProductTagByIdAsync(int productTagId)
         {
-            if (productTagId == 0)
-                return null;
-
-            return _productTagRepository.GetById(productTagId);
+            return await _productTagRepository.GetByIdAsync(productTagId, cache => default);
         }
 
         /// <summary>
-        /// Gets product tag by name
+        /// Gets product tags
         /// </summary>
-        /// <param name="name">Product tag name</param>
-        /// <returns>Product tag</returns>
-        public virtual ProductTag GetProductTagByName(string name)
+        /// <param name="productTagIds">Product tags identifiers</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the product tags
+        /// </returns>
+        public virtual async Task<IList<ProductTag>> GetProductTagsByIdsAsync(int[] productTagIds)
         {
-            var query = from pt in _productTagRepository.Table
-                        where pt.Name == name
-                        select pt;
-
-            var productTag = query.FirstOrDefault();
-            return productTag;
+            return await _productTagRepository.GetByIdsAsync(productTagIds);
         }
-
+        
         /// <summary>
-        /// Inserts a product tag
+        /// Inserts a product-product tag mapping
         /// </summary>
-        /// <param name="productTag">Product tag</param>
-        public virtual void InsertProductTag(ProductTag productTag)
+        /// <param name="tagMapping">Product-product tag mapping</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task InsertProductProductTagMappingAsync(ProductProductTagMapping tagMapping)
         {
-            if (productTag == null)
-                throw new ArgumentNullException("productTag");
-
-            _productTagRepository.Insert(productTag);
-
-            //cache
-            _cacheManager.RemoveByPattern(PRODUCTTAG_PATTERN_KEY);
-
-            //event notification
-            _eventPublisher.EntityInserted(productTag);
+            await _productProductTagMappingRepository.InsertAsync(tagMapping);
         }
-
+        
         /// <summary>
         /// Updates the product tag
         /// </summary>
         /// <param name="productTag">Product tag</param>
-        public virtual void UpdateProductTag(ProductTag productTag)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateProductTagAsync(ProductTag productTag)
         {
             if (productTag == null)
-                throw new ArgumentNullException("productTag");
+                throw new ArgumentNullException(nameof(productTag));
 
-            _productTagRepository.Update(productTag);
+            await _productTagRepository.UpdateAsync(productTag);
 
-            //cache
-            _cacheManager.RemoveByPattern(PRODUCTTAG_PATTERN_KEY);
-
-            //event notification
-            _eventPublisher.EntityUpdated(productTag);
+            var seName = await _urlRecordService.ValidateSeNameAsync(productTag, string.Empty, productTag.Name, true);
+            await _urlRecordService.SaveSlugAsync(productTag, seName, 0);
         }
 
         /// <summary>
-        /// Get number of products
+        /// Get products quantity linked to a passed tag identifier
         /// </summary>
         /// <param name="productTagId">Product tag identifier</param>
         /// <param name="storeId">Store identifier</param>
-        /// <returns>Number of products</returns>
-        public virtual int GetProductCount(int productTagId, int storeId)
+        /// <param name="showHidden">A value indicating whether to show hidden records</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the number of products
+        /// </returns>
+        public virtual async Task<int> GetProductCountByProductTagIdAsync(int productTagId, int storeId, bool showHidden = false)
         {
-            var dictionary = GetProductCount(storeId);
+            var dictionary = await GetProductCountAsync(storeId, showHidden);
             if (dictionary.ContainsKey(productTagId))
                 return dictionary[productTagId];
-            
+
             return 0;
+        }
+
+        /// <summary>
+        /// Get product count for every linked tag
+        /// </summary>
+        /// <param name="storeId">Store identifier</param>
+        /// <param name="showHidden">A value indicating whether to show hidden records</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the dictionary of "product tag ID : product count"
+        /// </returns>
+        public virtual async Task<Dictionary<int, int>> GetProductCountAsync(int storeId, bool showHidden = false)
+        {
+            var customer = await _workContext.GetCurrentCustomerAsync();
+            var customerRoleIds = await _customerService.GetCustomerRoleIdsAsync(customer);
+
+            var key = _staticCacheManager.PrepareKeyForDefaultCache(NopCatalogDefaults.ProductTagCountCacheKey, storeId, customerRoleIds, showHidden);
+
+            return await _staticCacheManager.GetAsync(key, async () =>
+            {
+                var query = _productProductTagMappingRepository.Table;
+
+                if (!showHidden)
+                {
+                    var productsQuery = _productRepository.Table.Where(p => p.Published);
+
+                    //apply store mapping constraints
+                    productsQuery = await _storeMappingService.ApplyStoreMapping(productsQuery, storeId);
+
+                    //apply ACL constraints
+                    productsQuery = await _aclService.ApplyAcl(productsQuery, customerRoleIds);
+
+                    query = query.Where(pc => productsQuery.Any(p => !p.Deleted && pc.ProductId == p.Id));
+                }
+
+                var pTagCount = from pt in _productTagRepository.Table
+                                join ptm in query on pt.Id equals ptm.ProductTagId
+                                group ptm by ptm.ProductTagId into ptmGrouped
+                                select new
+                                {
+                                    ProductTagId = ptmGrouped.Key,
+                                    ProductCount = ptmGrouped.Count()
+                                };
+
+                return pTagCount.ToDictionary(item => item.ProductTagId, item => item.ProductCount);
+            });
+        }
+        
+        /// <summary>
+        /// Update product tags
+        /// </summary>
+        /// <param name="product">Product for update</param>
+        /// <param name="productTags">Product tags</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateProductTagsAsync(Product product, string[] productTags)
+        {
+            if (product == null)
+                throw new ArgumentNullException(nameof(product));
+
+            //product tags
+            var existingProductTags = await GetAllProductTagsByProductIdAsync(product.Id);
+            var productTagsToRemove = new List<ProductTag>();
+            foreach (var existingProductTag in existingProductTags)
+            {
+                var found = false;
+                foreach (var newProductTag in productTags)
+                {
+                    if (!existingProductTag.Name.Equals(newProductTag, StringComparison.InvariantCultureIgnoreCase))
+                        continue;
+
+                    found = true;
+                    break;
+                }
+
+                if (!found)
+                    productTagsToRemove.Add(existingProductTag);
+            }
+
+            foreach (var productTag in productTagsToRemove)
+                await DeleteProductProductTagMappingAsync(product.Id, productTag.Id);
+
+            foreach (var productTagName in productTags)
+            {
+                ProductTag productTag;
+                var productTag2 = await GetProductTagByNameAsync(productTagName);
+                if (productTag2 == null)
+                {
+                    //add new product tag
+                    productTag = new ProductTag
+                    {
+                        Name = productTagName
+                    };
+                    await InsertProductTagAsync(productTag);
+                }
+                else
+                    productTag = productTag2;
+
+                if (!await ProductTagExistsAsync(product, productTag.Id))
+                    await InsertProductProductTagMappingAsync(new ProductProductTagMapping { ProductTagId = productTag.Id, ProductId = product.Id });
+
+                var seName = await _urlRecordService.ValidateSeNameAsync(productTag, string.Empty, productTag.Name, true);
+                await _urlRecordService.SaveSlugAsync(productTag, seName, 0);
+            }
+
+            //cache
+            await _staticCacheManager.RemoveByPrefixAsync(NopEntityCacheDefaults<ProductTag>.Prefix);
         }
 
         #endregion

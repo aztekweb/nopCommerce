@@ -1,9 +1,9 @@
 ﻿using System;
-using Nop.Web.Framework.Mvc;
+using Nop.Web.Framework.Models;
 
 namespace Nop.Web.Models.Blogs
 {
-    public partial class BlogCommentModel : BaseNopEntityModel
+    public partial record BlogCommentModel : BaseNopEntityModel
     {
         public int CustomerId { get; set; }
 

@@ -1,13 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
-using FluentValidation.Attributes;
-using Nop.Web.Framework.Mvc;
-using Nop.Web.Validators.Blogs;
+using Nop.Web.Framework.Models;
 
 namespace Nop.Web.Models.Blogs
 {
-    [Validator(typeof(BlogPostValidator))]
-    public partial class BlogPostModel : BaseNopEntityModel
+    public partial record BlogPostModel : BaseNopEntityModel
     {
         public BlogPostModel()
         {
@@ -25,6 +22,7 @@ namespace Nop.Web.Models.Blogs
         public string Body { get; set; }
         public string BodyOverview { get; set; }
         public bool AllowComments { get; set; }
+        public bool PreventNotRegisteredUsersToLeaveComments { get; set; }
         public int NumberOfComments { get; set; }
         public DateTime CreatedOn { get; set; }
 

@@ -1,6 +1,4 @@
-using System;
-using System.Collections.Generic;
-using Nop.Core.Domain.Localization;
+﻿using System;
 using Nop.Core.Domain.Seo;
 using Nop.Core.Domain.Stores;
 
@@ -11,8 +9,6 @@ namespace Nop.Core.Domain.News
     /// </summary>
     public partial class NewsItem : BaseEntity, ISlugSupported, IStoreMappingSupported
     {
-        private ICollection<NewsComment> _newsComments;
-
         /// <summary>
         /// Gets or sets the language identifier
         /// </summary>
@@ -54,14 +50,6 @@ namespace Nop.Core.Domain.News
         public bool AllowComments { get; set; }
 
         /// <summary>
-        /// Gets or sets the total number of comments
-        /// <remarks>
-        /// We use this property for performance optimization (no SQL command executed)
-        /// </remarks>
-        /// </summary>
-        public int CommentCount { get; set; }
-
-        /// <summary>
         /// Gets or sets a value indicating whether the entity is limited/restricted to certain stores
         /// </summary>
         public bool LimitedToStores { get; set; }
@@ -85,19 +73,5 @@ namespace Nop.Core.Domain.News
         /// Gets or sets the date and time of entity creation
         /// </summary>
         public DateTime CreatedOnUtc { get; set; }
-
-        /// <summary>
-        /// Gets or sets the news comments
-        /// </summary>
-        public virtual ICollection<NewsComment> NewsComments
-        {
-            get { return _newsComments ?? (_newsComments = new List<NewsComment>()); }
-            protected set { _newsComments = value; }
-        }
-        
-        /// <summary>
-        /// Gets or sets the language
-        /// </summary>
-        public virtual Language Language { get; set; }
     }
 }

@@ -1,6 +1,6 @@
-﻿@model ActiveDiscussionsModel
-@using Nop.Web.Models.Boards;
-@using Nop.Web.Models.Common;
+﻿@using Nop.Services.Localization
+@model ActiveDiscussionsModel
+@inject ILocalizationService localizationService
 <div class="forums-table-section topic-group active-discussions">
     <div class="forums-table-section-title">
         @if (Model.ActiveDiscussionsFeedEnabled)
@@ -9,19 +9,19 @@
         }
         <strong>@T("Forum.ActiveDiscussions")</strong>
     </div>
-        @{
-            var pager = Html.Pager(new PagerModel
-            {
-                PageSize = Model.TopicPageSize,
-                TotalRecords = Model.TopicTotalRecords,
-                PageIndex = Model.TopicPageIndex,
-                ShowTotalSummary = false,
-                RouteActionName = "ActiveDiscussionsPaged",
-                UseRouteLinks = true,
-                RouteValues = new ForumActiveDiscussionsRouteValues()
-            });
-        }
-    @if (!MvcHtmlString.IsNullOrEmpty(pager))
+    @{
+        var pager = await Html.PagerAsync(new PagerModel(localizationService)
+        {
+            PageSize = Model.TopicPageSize,
+            TotalRecords = Model.TopicTotalRecords,
+            PageIndex = Model.TopicPageIndex,
+            ShowTotalSummary = false,
+            RouteActionName = "ActiveDiscussionsPaged",
+            UseRouteLinks = true,
+            RouteValues = new ForumActiveDiscussionsRouteValues()
+        });
+    }
+    @if (!string.IsNullOrEmpty(await pager.RenderHtmlContentAsync()))
     {
         <div class="pager upper">
             @pager
@@ -36,6 +36,10 @@
                         <col />
                         <col width="1" />
                         <col width="1" />
+                        @if (Model.AllowPostVoting)
+                        {
+                            <col width="1" />
+                        }
                         <col width="1" />
                     </colgroup>
                     <thead>
@@ -49,6 +53,12 @@
                             <th class="views">
                                 @T("Forum.Views")
                             </th>
+                            @if (Model.AllowPostVoting)
+                            {
+                                <th class="votes">
+                                    @T("Forum.Votes")
+                                </th>
+                            }
                             <th class="latest-post">
                                 @T("Forum.LatestPost")
                             </th>
@@ -65,7 +75,7 @@
                                     @if (topic.NumPosts > Model.PostsPageSize)
                                     {
                                         <div class="topic-pager">
-                                            @Html.ForumTopicSmallPager(topic)
+                                            @await Html.ForumTopicSmallPagerAsync(topic)
                                         </div>
                                     }
                                     <div class="topic-starter">
@@ -89,8 +99,14 @@
                                 <td class="views">
                                     @topic.Views
                                 </td>
+                                @if (Model.AllowPostVoting)
+                                {
+                                    <td class="votes">
+                                        @topic.Votes
+                                    </td>
+                                }
                                 <td class="latest-post">
-                                    @Html.Action("LastPost", new { forumPostId = topic.LastPostId, showTopic = false })
+                                    @await Component.InvokeAsync(typeof(ForumLastPostViewComponent), new { forumPostId = topic.LastPostId, showTopic = false })
                                 </td>
                             </tr>
                         }
@@ -99,7 +115,7 @@
             </div>
         }
     </div>
-    @if (!MvcHtmlString.IsNullOrEmpty(pager))
+    @if (!string.IsNullOrEmpty(await pager.RenderHtmlContentAsync()))
     {
         <div class="pager lower">
             @pager

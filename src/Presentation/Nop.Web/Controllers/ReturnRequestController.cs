@@ -1,266 +1,264 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Web.Mvc;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Nop.Core;
-using Nop.Core.Caching;
-using Nop.Core.Domain.Customers;
 using Nop.Core.Domain.Localization;
+using Nop.Core.Domain.Media;
 using Nop.Core.Domain.Orders;
-using Nop.Core.Domain.Tax;
-using Nop.Services.Catalog;
+using Nop.Core.Infrastructure;
 using Nop.Services.Customers;
-using Nop.Services.Directory;
-using Nop.Services.Helpers;
 using Nop.Services.Localization;
+using Nop.Services.Media;
 using Nop.Services.Messages;
 using Nop.Services.Orders;
-using Nop.Services.Seo;
-using Nop.Web.Framework.Security;
-using Nop.Web.Infrastructure.Cache;
+using Nop.Web.Factories;
 using Nop.Web.Models.Order;
 
 namespace Nop.Web.Controllers
 {
+    [AutoValidateAntiforgeryToken]
     public partial class ReturnRequestController : BasePublicController
     {
-		#region Fields
+        #region Fields
 
-        private readonly IReturnRequestService _returnRequestService;
-        private readonly IOrderService _orderService;
-        private readonly IWorkContext _workContext;
-        private readonly IStoreContext _storeContext;
-        private readonly ICurrencyService _currencyService;
-        private readonly IPriceFormatter _priceFormatter;
-        private readonly IOrderProcessingService _orderProcessingService;
-        private readonly ILocalizationService _localizationService;
         private readonly ICustomerService _customerService;
+        private readonly ICustomNumberFormatter _customNumberFormatter;
+        private readonly IDownloadService _downloadService;
+        private readonly ILocalizationService _localizationService;
+        private readonly INopFileProvider _fileProvider;
+        private readonly IOrderProcessingService _orderProcessingService;
+        private readonly IOrderService _orderService;
+        private readonly IReturnRequestModelFactory _returnRequestModelFactory;
+        private readonly IReturnRequestService _returnRequestService;
+        private readonly IStoreContext _storeContext;
+        private readonly IWorkContext _workContext;
         private readonly IWorkflowMessageService _workflowMessageService;
-        private readonly IDateTimeHelper _dateTimeHelper;
         private readonly LocalizationSettings _localizationSettings;
-        private readonly ICacheManager _cacheManager;
+        private readonly OrderSettings _orderSettings;
 
         #endregion
 
-        #region Constructors
+        #region Ctor
 
-        public ReturnRequestController(IReturnRequestService returnRequestService,
-            IOrderService orderService, 
-            IWorkContext workContext, 
-            IStoreContext storeContext,
-            ICurrencyService currencyService, 
-            IPriceFormatter priceFormatter,
-            IOrderProcessingService orderProcessingService,
+        public ReturnRequestController(ICustomerService customerService,
+            ICustomNumberFormatter customNumberFormatter,
+            IDownloadService downloadService,
             ILocalizationService localizationService,
-            ICustomerService customerService,
+            INopFileProvider fileProvider,
+            IOrderProcessingService orderProcessingService,
+            IOrderService orderService,
+            IReturnRequestModelFactory returnRequestModelFactory,
+            IReturnRequestService returnRequestService,
+            IStoreContext storeContext,
+            IWorkContext workContext,
             IWorkflowMessageService workflowMessageService,
-            IDateTimeHelper dateTimeHelper,
             LocalizationSettings localizationSettings,
-            ICacheManager cacheManager)
+            OrderSettings orderSettings)
         {
-            this._returnRequestService = returnRequestService;
-            this._orderService = orderService;
-            this._workContext = workContext;
-            this._storeContext = storeContext;
-            this._currencyService = currencyService;
-            this._priceFormatter = priceFormatter;
-            this._orderProcessingService = orderProcessingService;
-            this._localizationService = localizationService;
-            this._customerService = customerService;
-            this._workflowMessageService = workflowMessageService;
-            this._dateTimeHelper = dateTimeHelper;
-            this._localizationSettings = localizationSettings;
-            this._cacheManager = cacheManager;
+            _customerService = customerService;
+            _customNumberFormatter = customNumberFormatter;
+            _downloadService = downloadService;
+            _localizationService = localizationService;
+            _fileProvider = fileProvider;
+            _orderProcessingService = orderProcessingService;
+            _orderService = orderService;
+            _returnRequestModelFactory = returnRequestModelFactory;
+            _returnRequestService = returnRequestService;
+            _storeContext = storeContext;
+            _workContext = workContext;
+            _workflowMessageService = workflowMessageService;
+            _localizationSettings = localizationSettings;
+            _orderSettings = orderSettings;
         }
 
         #endregion
 
-        #region Utilities
-
-        [NonAction]
-        protected virtual SubmitReturnRequestModel PrepareReturnRequestModel(SubmitReturnRequestModel model, Order order)
-        {
-            if (order == null)
-                throw new ArgumentNullException("order");
-
-            if (model == null)
-                throw new ArgumentNullException("model");
-
-            model.OrderId = order.Id;
-
-            //return reasons
-            model.AvailableReturnReasons = _cacheManager.Get(string.Format(ModelCacheEventConsumer.RETURNREQUESTREASONS_MODEL_KEY, _workContext.WorkingLanguage.Id),
-                () =>
-                {
-                    var reasons = new List<SubmitReturnRequestModel.ReturnRequestReasonModel>();
-                    foreach (var rrr in _returnRequestService.GetAllReturnRequestReasons())
-                        reasons.Add(new SubmitReturnRequestModel.ReturnRequestReasonModel()
-                        {
-                            Id = rrr.Id,
-                            Name = rrr.GetLocalized(x => x.Name)
-                        });
-                    return reasons;
-                });
-
-            //return actions
-            model.AvailableReturnActions = _cacheManager.Get(string.Format(ModelCacheEventConsumer.RETURNREQUESTACTIONS_MODEL_KEY, _workContext.WorkingLanguage.Id),
-                () =>
-                {
-                    var actions = new List<SubmitReturnRequestModel.ReturnRequestActionModel>();
-                    foreach (var rra in _returnRequestService.GetAllReturnRequestActions())
-                        actions.Add(new SubmitReturnRequestModel.ReturnRequestActionModel()
-                        {
-                            Id = rra.Id,
-                            Name = rra.GetLocalized(x => x.Name)
-                        });
-                    return actions;
-                });
-
-            //products
-            var orderItems = _orderService.GetAllOrderItems(order.Id, null, null, null, null, null, null);
-            foreach (var orderItem in orderItems)
-            {
-                var orderItemModel = new SubmitReturnRequestModel.OrderItemModel
-                {
-                    Id = orderItem.Id,
-                    ProductId = orderItem.Product.Id,
-                    ProductName = orderItem.Product.GetLocalized(x => x.Name),
-                    ProductSeName = orderItem.Product.GetSeName(),
-                    AttributeInfo = orderItem.AttributeDescription,
-                    Quantity = orderItem.Quantity
-                };
-                model.Items.Add(orderItemModel);
-
-                //unit price
-                if (order.CustomerTaxDisplayType == TaxDisplayType.IncludingTax)
-                {
-                    //including tax
-                    var unitPriceInclTaxInCustomerCurrency = _currencyService.ConvertCurrency(orderItem.UnitPriceInclTax, order.CurrencyRate);
-                    orderItemModel.UnitPrice = _priceFormatter.FormatPrice(unitPriceInclTaxInCustomerCurrency, true, order.CustomerCurrencyCode, _workContext.WorkingLanguage, true);
-                }
-                else
-                {
-                    //excluding tax
-                    var unitPriceExclTaxInCustomerCurrency = _currencyService.ConvertCurrency(orderItem.UnitPriceExclTax, order.CurrencyRate);
-                    orderItemModel.UnitPrice = _priceFormatter.FormatPrice(unitPriceExclTaxInCustomerCurrency, true, order.CustomerCurrencyCode, _workContext.WorkingLanguage, false);
-                }
-            }
-
-            return model;
-        }
-
-        #endregion
-        
         #region Methods
 
-        [NopHttpsRequirement(SslRequirement.Yes)]
-        public ActionResult CustomerReturnRequests()
+        public virtual async Task<IActionResult> CustomerReturnRequests()
         {
-            if (!_workContext.CurrentCustomer.IsRegistered())
-                return new HttpUnauthorizedResult();
+            if (!await _customerService.IsRegisteredAsync(await _workContext.GetCurrentCustomerAsync()))
+                return Challenge();
 
-            var model = new CustomerReturnRequestsModel();
-
-            var returnRequests = _returnRequestService.SearchReturnRequests(_storeContext.CurrentStore.Id, 
-                _workContext.CurrentCustomer.Id);
-            foreach (var returnRequest in returnRequests)
-            {
-                var orderItem = _orderService.GetOrderItemById(returnRequest.OrderItemId);
-                if (orderItem != null)
-                {
-                    var product = orderItem.Product;
-
-                    var itemModel = new CustomerReturnRequestsModel.ReturnRequestModel
-                    {
-                        Id = returnRequest.Id,
-                        ReturnRequestStatus = returnRequest.ReturnRequestStatus.GetLocalizedEnum(_localizationService, _workContext),
-                        ProductId = product.Id,
-                        ProductName = product.GetLocalized(x => x.Name),
-                        ProductSeName = product.GetSeName(),
-                        Quantity = returnRequest.Quantity,
-                        ReturnAction = returnRequest.RequestedAction,
-                        ReturnReason = returnRequest.ReasonForReturn,
-                        Comments = returnRequest.CustomerComments,
-                        CreatedOn = _dateTimeHelper.ConvertToUserTime(returnRequest.CreatedOnUtc, DateTimeKind.Utc),
-                    };
-                    model.Items.Add(itemModel);
-                }
-            }
-
+            var model = await _returnRequestModelFactory.PrepareCustomerReturnRequestsModelAsync();
             return View(model);
         }
 
-        [NopHttpsRequirement(SslRequirement.Yes)]
-        public ActionResult ReturnRequest(int orderId)
+        public virtual async Task<IActionResult> ReturnRequest(int orderId)
         {
-            var order = _orderService.GetOrderById(orderId);
-            if (order == null || order.Deleted || _workContext.CurrentCustomer.Id != order.CustomerId)
-                return new HttpUnauthorizedResult();
+            var order = await _orderService.GetOrderByIdAsync(orderId);
+            var customer = await _workContext.GetCurrentCustomerAsync();
+            if (order == null || order.Deleted || customer.Id != order.CustomerId)
+                return Challenge();
 
-            if (!_orderProcessingService.IsReturnRequestAllowed(order))
-                return RedirectToRoute("HomePage");
+            if (!await _orderProcessingService.IsReturnRequestAllowedAsync(order))
+                return RedirectToRoute("Homepage");
 
             var model = new SubmitReturnRequestModel();
-            model = PrepareReturnRequestModel(model, order);
+            model = await _returnRequestModelFactory.PrepareSubmitReturnRequestModelAsync(model, order);
             return View(model);
         }
 
         [HttpPost, ActionName("ReturnRequest")]
-        [ValidateInput(false)]
-        [PublicAntiForgery]
-        public ActionResult ReturnRequestSubmit(int orderId, SubmitReturnRequestModel model, FormCollection form)
+        public virtual async Task<IActionResult> ReturnRequestSubmit(int orderId, SubmitReturnRequestModel model, IFormCollection form)
         {
-            var order = _orderService.GetOrderById(orderId);
-            if (order == null || order.Deleted || _workContext.CurrentCustomer.Id != order.CustomerId)
-                return new HttpUnauthorizedResult();
+            var order = await _orderService.GetOrderByIdAsync(orderId);
+            var customer = await _workContext.GetCurrentCustomerAsync();
+            if (order == null || order.Deleted || customer.Id != order.CustomerId)
+                return Challenge();
 
-            if (!_orderProcessingService.IsReturnRequestAllowed(order))
-                return RedirectToRoute("HomePage");
+            if (!await _orderProcessingService.IsReturnRequestAllowedAsync(order))
+                return RedirectToRoute("Homepage");
 
-            int count = 0;
-            foreach (var orderItem in order.OrderItems)
+            var count = 0;
+
+            var downloadId = 0;
+            if (_orderSettings.ReturnRequestsAllowFiles)
             {
-                int quantity = 0; //parse quantity
-                foreach (string formKey in form.AllKeys)
-                    if (formKey.Equals(string.Format("quantity{0}", orderItem.Id), StringComparison.InvariantCultureIgnoreCase))
+                var download = await _downloadService.GetDownloadByGuidAsync(model.UploadedFileGuid);
+                if (download != null)
+                    downloadId = download.Id;
+            }
+
+            //returnable products
+            var orderItems = await _orderService.GetOrderItemsAsync(order.Id, isNotReturnable: false);
+            foreach (var orderItem in orderItems)
+            {
+                var quantity = 0; //parse quantity
+                foreach (var formKey in form.Keys)
+                    if (formKey.Equals($"quantity{orderItem.Id}", StringComparison.InvariantCultureIgnoreCase))
                     {
-                        int.TryParse(form[formKey], out quantity);
+                        _ = int.TryParse(form[formKey], out quantity);
                         break;
                     }
                 if (quantity > 0)
                 {
-                    var rrr = _returnRequestService.GetReturnRequestReasonById(model.ReturnRequestReasonId);
-                    var rra = _returnRequestService.GetReturnRequestActionById(model.ReturnRequestActionId);
+                    var rrr = await _returnRequestService.GetReturnRequestReasonByIdAsync(model.ReturnRequestReasonId);
+                    var rra = await _returnRequestService.GetReturnRequestActionByIdAsync(model.ReturnRequestActionId);
+                    var store = await _storeContext.GetCurrentStoreAsync();
 
                     var rr = new ReturnRequest
                     {
-                        StoreId = _storeContext.CurrentStore.Id,
+                        CustomNumber = "",
+                        StoreId = store.Id,
                         OrderItemId = orderItem.Id,
                         Quantity = quantity,
-                        CustomerId = _workContext.CurrentCustomer.Id,
-                        ReasonForReturn = rrr != null ? rrr.GetLocalized(x => x.Name) : "not available",
-                        RequestedAction = rra != null ? rra.GetLocalized(x => x.Name) : "not available",
+                        CustomerId = customer.Id,
+                        ReasonForReturn = rrr != null ? await _localizationService.GetLocalizedAsync(rrr, x => x.Name) : "not available",
+                        RequestedAction = rra != null ? await _localizationService.GetLocalizedAsync(rra, x => x.Name) : "not available",
                         CustomerComments = model.Comments,
+                        UploadedFileId = downloadId,
                         StaffNotes = string.Empty,
                         ReturnRequestStatus = ReturnRequestStatus.Pending,
                         CreatedOnUtc = DateTime.UtcNow,
                         UpdatedOnUtc = DateTime.UtcNow
                     };
-                    _workContext.CurrentCustomer.ReturnRequests.Add(rr);
-                    _customerService.UpdateCustomer(_workContext.CurrentCustomer);
-                    //notify store owner here (email)
-                    _workflowMessageService.SendNewReturnRequestStoreOwnerNotification(rr, orderItem, _localizationSettings.DefaultAdminLanguageId);
+
+                    await _returnRequestService.InsertReturnRequestAsync(rr);
+
+                    //set return request custom number
+                    rr.CustomNumber = _customNumberFormatter.GenerateReturnRequestCustomNumber(rr);
+                    await _customerService.UpdateCustomerAsync(customer);
+                    await _returnRequestService.UpdateReturnRequestAsync(rr);
+
+                    //notify store owner
+                    await _workflowMessageService.SendNewReturnRequestStoreOwnerNotificationAsync(rr, orderItem, order, _localizationSettings.DefaultAdminLanguageId);
+                    //notify customer
+                    await _workflowMessageService.SendNewReturnRequestCustomerNotificationAsync(rr, orderItem, order);
 
                     count++;
                 }
             }
 
-            model = PrepareReturnRequestModel(model, order);
+            model = await _returnRequestModelFactory.PrepareSubmitReturnRequestModelAsync(model, order);
             if (count > 0)
-                model.Result = _localizationService.GetResource("ReturnRequests.Submitted");
+                model.Result = await _localizationService.GetResourceAsync("ReturnRequests.Submitted");
             else
-                model.Result = _localizationService.GetResource("ReturnRequests.NoItemsSubmitted");
+                model.Result = await _localizationService.GetResourceAsync("ReturnRequests.NoItemsSubmitted");
 
             return View(model);
+        }
+
+        [HttpPost]
+        [IgnoreAntiforgeryToken]
+        public virtual async Task<IActionResult> UploadFileReturnRequest()
+        {
+            if (!_orderSettings.ReturnRequestsEnabled || !_orderSettings.ReturnRequestsAllowFiles)
+            {
+                return Json(new
+                {
+                    success = false,
+                    downloadGuid = Guid.Empty,
+                });
+            }
+
+            var httpPostedFile = Request.Form.Files.FirstOrDefault();
+            if (httpPostedFile == null)
+            {
+                return Json(new
+                {
+                    success = false,
+                    message = "No file uploaded",
+                    downloadGuid = Guid.Empty,
+                });
+            }
+
+            var fileBinary = await _downloadService.GetDownloadBitsAsync(httpPostedFile);
+
+            var qqFileNameParameter = "qqfilename";
+            var fileName = httpPostedFile.FileName;
+            if (string.IsNullOrEmpty(fileName) && Request.Form.ContainsKey(qqFileNameParameter))
+                fileName = Request.Form[qqFileNameParameter].ToString();
+            //remove path (passed in IE)
+            fileName = _fileProvider.GetFileName(fileName);
+
+            var contentType = httpPostedFile.ContentType;
+
+            var fileExtension = _fileProvider.GetFileExtension(fileName);
+            if (!string.IsNullOrEmpty(fileExtension))
+                fileExtension = fileExtension.ToLowerInvariant();
+
+            var validationFileMaximumSize = _orderSettings.ReturnRequestsFileMaximumSize;
+            if (validationFileMaximumSize > 0)
+            {
+                //compare in bytes
+                var maxFileSizeBytes = validationFileMaximumSize * 1024;
+                if (fileBinary.Length > maxFileSizeBytes)
+                {
+                    return Json(new
+                    {
+                        success = false,
+                        message = string.Format(await _localizationService.GetResourceAsync("ShoppingCart.MaximumUploadedFileSize"), validationFileMaximumSize),
+                        downloadGuid = Guid.Empty,
+                    });
+                }
+            }
+
+            var download = new Download
+            {
+                DownloadGuid = Guid.NewGuid(),
+                UseDownloadUrl = false,
+                DownloadUrl = "",
+                DownloadBinary = fileBinary,
+                ContentType = contentType,
+                //we store filename without extension for downloads
+                Filename = _fileProvider.GetFileNameWithoutExtension(fileName),
+                Extension = fileExtension,
+                IsNew = true
+            };
+            await _downloadService.InsertDownloadAsync(download);
+
+            //when returning JSON the mime-type must be set to text/plain
+            //otherwise some browsers will pop-up a "Save As" dialog.
+            return Json(new
+            {
+                success = true,
+                message = await _localizationService.GetResourceAsync("ShoppingCart.FileUploaded"),
+                downloadUrl = Url.Action("GetFileUpload", "Download", new { downloadId = download.DownloadGuid }),
+                downloadGuid = download.DownloadGuid,
+            });
         }
 
         #endregion

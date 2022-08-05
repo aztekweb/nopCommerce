@@ -1,6 +1,4 @@
-using System;
-using System.Collections.Generic;
-using Nop.Core.Domain.Localization;
+﻿using System;
 using Nop.Core.Domain.Seo;
 using Nop.Core.Domain.Stores;
 
@@ -11,12 +9,15 @@ namespace Nop.Core.Domain.Blogs
     /// </summary>
     public partial class BlogPost : BaseEntity, ISlugSupported, IStoreMappingSupported
     {
-        private ICollection<BlogComment> _blogComments;
-
         /// <summary>
         /// Gets or sets the language identifier
         /// </summary>
         public int LanguageId { get; set; }
+
+        /// <summary>
+        /// Gets or sets the value indicating whether this blog post should be included in sitemap
+        /// </summary>
+        public bool IncludeInSitemap { get; set; }
 
         /// <summary>
         /// Gets or sets the blog post title
@@ -37,14 +38,6 @@ namespace Nop.Core.Domain.Blogs
         /// Gets or sets a value indicating whether the blog post comments are allowed 
         /// </summary>
         public bool AllowComments { get; set; }
-
-        /// <summary>
-        /// Gets or sets the total number of comments
-        /// <remarks>
-        /// We use this property for performance optimization (no SQL command executed)
-        /// </remarks>
-        /// </summary>
-        public int CommentCount { get; set; }
 
         /// <summary>
         /// Gets or sets the blog tags
@@ -85,19 +78,5 @@ namespace Nop.Core.Domain.Blogs
         /// Gets or sets the date and time of entity creation
         /// </summary>
         public DateTime CreatedOnUtc { get; set; }
-
-        /// <summary>
-        /// Gets or sets the blog comments
-        /// </summary>
-        public virtual ICollection<BlogComment> BlogComments
-        {
-            get { return _blogComments ?? (_blogComments = new List<BlogComment>()); }
-            protected set { _blogComments = value; }
-        }
-        
-        /// <summary>
-        /// Gets or sets the language
-        /// </summary>
-        public virtual Language Language { get; set; }
     }
 }

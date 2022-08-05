@@ -1,14 +1,14 @@
 ﻿using System.Collections.Generic;
-using Nop.Web.Framework.Mvc;
+using Nop.Web.Framework.Models;
 using Nop.Web.Models.Common;
 
 namespace Nop.Web.Models.Boards
 {
-    public partial class CustomerForumSubscriptionsModel
+    public partial record CustomerForumSubscriptionsModel : BaseNopModel
     {
         public CustomerForumSubscriptionsModel()
         {
-            this.ForumSubscriptions = new List<ForumSubscriptionModel>();
+            ForumSubscriptions = new List<ForumSubscriptionModel>();
         }
 
         public IList<ForumSubscriptionModel> ForumSubscriptions { get; set; }
@@ -16,7 +16,7 @@ namespace Nop.Web.Models.Boards
 
         #region Nested classes
 
-        public partial class ForumSubscriptionModel : BaseNopEntityModel
+        public partial record ForumSubscriptionModel : BaseNopEntityModel
         {
             public int ForumId { get; set; }
             public int ForumTopicId { get; set; }

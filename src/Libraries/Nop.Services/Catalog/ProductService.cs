@@ -1,23 +1,23 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Linq;
+using System.Threading.Tasks;
 using Nop.Core;
 using Nop.Core.Caching;
-using Nop.Core.Data;
 using Nop.Core.Domain.Catalog;
 using Nop.Core.Domain.Common;
+using Nop.Core.Domain.Customers;
+using Nop.Core.Domain.Discounts;
 using Nop.Core.Domain.Localization;
 using Nop.Core.Domain.Orders;
-using Nop.Core.Domain.Security;
 using Nop.Core.Domain.Shipping;
-using Nop.Core.Domain.Stores;
+using Nop.Core.Infrastructure;
 using Nop.Data;
 using Nop.Services.Customers;
-using Nop.Services.Events;
 using Nop.Services.Localization;
 using Nop.Services.Messages;
 using Nop.Services.Security;
+using Nop.Services.Shipping.Date;
 using Nop.Services.Stores;
 
 namespace Nop.Services.Catalog
@@ -27,1276 +27,372 @@ namespace Nop.Services.Catalog
     /// </summary>
     public partial class ProductService : IProductService
     {
-        #region Constants
-        /// <summary>
-        /// Key for caching
-        /// </summary>
-        /// <remarks>
-        /// {0} : product ID
-        /// </remarks>
-        private const string PRODUCTS_BY_ID_KEY = "Nop.product.id-{0}";
-        /// <summary>
-        /// Key pattern to clear cache
-        /// </summary>
-        private const string PRODUCTS_PATTERN_KEY = "Nop.product.";
-        #endregion
-
         #region Fields
 
-        private readonly IRepository<Product> _productRepository;
-        private readonly IRepository<RelatedProduct> _relatedProductRepository;
-        private readonly IRepository<CrossSellProduct> _crossSellProductRepository;
-        private readonly IRepository<TierPrice> _tierPriceRepository;
-        private readonly IRepository<LocalizedProperty> _localizedPropertyRepository;
-        private readonly IRepository<AclRecord> _aclRepository;
-        private readonly IRepository<StoreMapping> _storeMappingRepository;
-        private readonly IRepository<ProductPicture> _productPictureRepository;
-        private readonly IRepository<ProductSpecificationAttribute> _productSpecificationAttributeRepository;
-        private readonly IRepository<ProductReview> _productReviewRepository;
-        private readonly IRepository<ProductWarehouseInventory> _productWarehouseInventoryRepository;
-        private readonly IProductAttributeService _productAttributeService;
-        private readonly IProductAttributeParser _productAttributeParser;
-        private readonly ILanguageService _languageService;
-        private readonly IWorkflowMessageService _workflowMessageService;
-        private readonly IDataProvider _dataProvider;
-        private readonly IDbContext _dbContext;
-        private readonly ICacheManager _cacheManager;
-        private readonly IWorkContext _workContext;
-        private readonly LocalizationSettings _localizationSettings;
-        private readonly CommonSettings _commonSettings;
-        private readonly CatalogSettings _catalogSettings;
-        private readonly IEventPublisher _eventPublisher;
-        private readonly IAclService _aclService;
-        private readonly IStoreMappingService _storeMappingService;
+        protected readonly CatalogSettings _catalogSettings;
+        protected readonly CommonSettings _commonSettings;
+        protected readonly IAclService _aclService;
+        protected readonly ICustomerService _customerService;
+        protected readonly IDateRangeService _dateRangeService;
+        protected readonly ILanguageService _languageService;
+        protected readonly ILocalizationService _localizationService;
+        protected readonly IProductAttributeParser _productAttributeParser;
+        protected readonly IProductAttributeService _productAttributeService;
+        protected readonly IRepository<Category> _categoryRepository;
+        protected readonly IRepository<CrossSellProduct> _crossSellProductRepository;
+        protected readonly IRepository<DiscountProductMapping> _discountProductMappingRepository;
+        protected readonly IRepository<LocalizedProperty> _localizedPropertyRepository;
+        protected readonly IRepository<Manufacturer> _manufacturerRepository;
+        protected readonly IRepository<Product> _productRepository;
+        protected readonly IRepository<ProductAttributeCombination> _productAttributeCombinationRepository;
+        protected readonly IRepository<ProductAttributeMapping> _productAttributeMappingRepository;
+        protected readonly IRepository<ProductCategory> _productCategoryRepository;
+        protected readonly IRepository<ProductManufacturer> _productManufacturerRepository;
+        protected readonly IRepository<ProductPicture> _productPictureRepository;
+        protected readonly IRepository<ProductProductTagMapping> _productTagMappingRepository;
+        protected readonly IRepository<ProductReview> _productReviewRepository;
+        protected readonly IRepository<ProductReviewHelpfulness> _productReviewHelpfulnessRepository;
+        protected readonly IRepository<ProductSpecificationAttribute> _productSpecificationAttributeRepository;
+        protected readonly IRepository<ProductTag> _productTagRepository;
+        protected readonly IRepository<ProductVideo> _productVideoRepository;
+        protected readonly IRepository<ProductWarehouseInventory> _productWarehouseInventoryRepository;
+        protected readonly IRepository<RelatedProduct> _relatedProductRepository;
+        protected readonly IRepository<Shipment> _shipmentRepository;
+        protected readonly IRepository<StockQuantityHistory> _stockQuantityHistoryRepository;
+        protected readonly IRepository<TierPrice> _tierPriceRepository;
+        protected readonly IRepository<Warehouse> _warehouseRepository;
+        protected readonly IStaticCacheManager _staticCacheManager;
+        protected readonly IStoreMappingService _storeMappingService;
+        protected readonly IStoreService _storeService;
+        protected readonly IWorkContext _workContext;
+        protected readonly LocalizationSettings _localizationSettings;
 
         #endregion
 
         #region Ctor
 
-        /// <summary>
-        /// Ctor
-        /// </summary>
-        /// <param name="cacheManager">Cache manager</param>
-        /// <param name="productRepository">Product repository</param>
-        /// <param name="relatedProductRepository">Related product repository</param>
-        /// <param name="crossSellProductRepository">Cross-sell product repository</param>
-        /// <param name="tierPriceRepository">Tier price repository</param>
-        /// <param name="localizedPropertyRepository">Localized property repository</param>
-        /// <param name="aclRepository">ACL record repository</param>
-        /// <param name="storeMappingRepository">Store mapping repository</param>
-        /// <param name="productPictureRepository">Product picture repository</param>
-        /// <param name="productSpecificationAttributeRepository">Product specification attribute repository</param>
-        /// <param name="productReviewRepository">Product review repository</param>
-        /// <param name="productWarehouseInventoryRepository">Product warehouse inventory repository</param>
-        /// <param name="productAttributeService">Product attribute service</param>
-        /// <param name="productAttributeParser">Product attribute parser service</param>
-        /// <param name="languageService">Language service</param>
-        /// <param name="workflowMessageService">Workflow message service</param>
-        /// <param name="dataProvider">Data provider</param>
-        /// <param name="dbContext">Database Context</param>
-        /// <param name="workContext">Work context</param>
-        /// <param name="localizationSettings">Localization settings</param>
-        /// <param name="commonSettings">Common settings</param>
-        /// <param name="catalogSettings">Catalog settings</param>
-        /// <param name="eventPublisher">Event published</param>
-        /// <param name="aclService">ACL service</param>
-        /// <param name="storeMappingService">Store mapping service</param>
-        public ProductService(ICacheManager cacheManager,
-            IRepository<Product> productRepository,
-            IRepository<RelatedProduct> relatedProductRepository,
-            IRepository<CrossSellProduct> crossSellProductRepository,
-            IRepository<TierPrice> tierPriceRepository,
-            IRepository<ProductPicture> productPictureRepository,
-            IRepository<LocalizedProperty> localizedPropertyRepository,
-            IRepository<AclRecord> aclRepository,
-            IRepository<StoreMapping> storeMappingRepository,
-            IRepository<ProductSpecificationAttribute> productSpecificationAttributeRepository,
-            IRepository<ProductReview>  productReviewRepository,
-            IRepository<ProductWarehouseInventory> productWarehouseInventoryRepository,
-            IProductAttributeService productAttributeService,
-            IProductAttributeParser productAttributeParser,
-            ILanguageService languageService,
-            IWorkflowMessageService workflowMessageService,
-            IDataProvider dataProvider, 
-            IDbContext dbContext,
-            IWorkContext workContext,
-            LocalizationSettings localizationSettings, 
+        public ProductService(CatalogSettings catalogSettings,
             CommonSettings commonSettings,
-            CatalogSettings catalogSettings,
-            IEventPublisher eventPublisher,
             IAclService aclService,
-            IStoreMappingService storeMappingService)
+            ICustomerService customerService,
+            IDateRangeService dateRangeService,
+            ILanguageService languageService,
+            ILocalizationService localizationService,
+            IProductAttributeParser productAttributeParser,
+            IProductAttributeService productAttributeService,
+            IRepository<Category> categoryRepository,
+            IRepository<CrossSellProduct> crossSellProductRepository,
+            IRepository<DiscountProductMapping> discountProductMappingRepository,
+            IRepository<LocalizedProperty> localizedPropertyRepository,
+            IRepository<Manufacturer> manufacturerRepository,
+            IRepository<Product> productRepository,
+            IRepository<ProductAttributeCombination> productAttributeCombinationRepository,
+            IRepository<ProductAttributeMapping> productAttributeMappingRepository,
+            IRepository<ProductCategory> productCategoryRepository,
+            IRepository<ProductManufacturer> productManufacturerRepository,
+            IRepository<ProductPicture> productPictureRepository,
+            IRepository<ProductProductTagMapping> productTagMappingRepository,
+            IRepository<ProductReview> productReviewRepository,
+            IRepository<ProductReviewHelpfulness> productReviewHelpfulnessRepository,
+            IRepository<ProductSpecificationAttribute> productSpecificationAttributeRepository,
+            IRepository<ProductTag> productTagRepository,
+            IRepository<ProductVideo> productVideoRepository,
+            IRepository<ProductWarehouseInventory> productWarehouseInventoryRepository,
+            IRepository<RelatedProduct> relatedProductRepository,
+            IRepository<Shipment> shipmentRepository,
+            IRepository<StockQuantityHistory> stockQuantityHistoryRepository,
+            IRepository<TierPrice> tierPriceRepository,
+            IRepository<Warehouse> warehouseRepository,
+            IStaticCacheManager staticCacheManager,
+            IStoreService storeService,
+            IStoreMappingService storeMappingService,
+            IWorkContext workContext,
+            LocalizationSettings localizationSettings)
         {
-            this._cacheManager = cacheManager;
-            this._productRepository = productRepository;
-            this._relatedProductRepository = relatedProductRepository;
-            this._crossSellProductRepository = crossSellProductRepository;
-            this._tierPriceRepository = tierPriceRepository;
-            this._productPictureRepository = productPictureRepository;
-            this._localizedPropertyRepository = localizedPropertyRepository;
-            this._aclRepository = aclRepository;
-            this._storeMappingRepository = storeMappingRepository;
-            this._productSpecificationAttributeRepository = productSpecificationAttributeRepository;
-            this._productReviewRepository = productReviewRepository;
-            this._productWarehouseInventoryRepository = productWarehouseInventoryRepository;
-            this._productAttributeService = productAttributeService;
-            this._productAttributeParser = productAttributeParser;
-            this._languageService = languageService;
-            this._workflowMessageService = workflowMessageService;
-            this._dataProvider = dataProvider;
-            this._dbContext = dbContext;
-            this._workContext = workContext;
-            this._localizationSettings = localizationSettings;
-            this._commonSettings = commonSettings;
-            this._catalogSettings = catalogSettings;
-            this._eventPublisher = eventPublisher;
-            this._aclService = aclService;
-            this._storeMappingService = storeMappingService;
+            _catalogSettings = catalogSettings;
+            _commonSettings = commonSettings;
+            _aclService = aclService;
+            _customerService = customerService;
+            _dateRangeService = dateRangeService;
+            _languageService = languageService;
+            _localizationService = localizationService;
+            _productAttributeParser = productAttributeParser;
+            _productAttributeService = productAttributeService;
+            _categoryRepository = categoryRepository;
+            _crossSellProductRepository = crossSellProductRepository;
+            _discountProductMappingRepository = discountProductMappingRepository;
+            _localizedPropertyRepository = localizedPropertyRepository;
+            _manufacturerRepository = manufacturerRepository;
+            _productRepository = productRepository;
+            _productAttributeCombinationRepository = productAttributeCombinationRepository;
+            _productAttributeMappingRepository = productAttributeMappingRepository;
+            _productCategoryRepository = productCategoryRepository;
+            _productManufacturerRepository = productManufacturerRepository;
+            _productPictureRepository = productPictureRepository;
+            _productTagMappingRepository = productTagMappingRepository;
+            _productReviewRepository = productReviewRepository;
+            _productReviewHelpfulnessRepository = productReviewHelpfulnessRepository;
+            _productSpecificationAttributeRepository = productSpecificationAttributeRepository;
+            _productTagRepository = productTagRepository;
+            _productVideoRepository = productVideoRepository;
+            _productWarehouseInventoryRepository = productWarehouseInventoryRepository;
+            _relatedProductRepository = relatedProductRepository;
+            _shipmentRepository = shipmentRepository;
+            _stockQuantityHistoryRepository = stockQuantityHistoryRepository;
+            _tierPriceRepository = tierPriceRepository;
+            _warehouseRepository = warehouseRepository;
+            _staticCacheManager = staticCacheManager;
+            _storeMappingService = storeMappingService;
+            _storeService = storeService;
+            _workContext = workContext;
+            _localizationSettings = localizationSettings;
         }
 
         #endregion
-        
-        #region Methods
 
-        #region Products
+        #region Utilities
 
         /// <summary>
-        /// Delete a product
+        /// Applies the low stock activity to specified product by the total stock quantity
         /// </summary>
         /// <param name="product">Product</param>
-        public virtual void DeleteProduct(Product product)
+        /// <param name="totalStock">Total stock</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        protected virtual async Task ApplyLowStockActivityAsync(Product product, int totalStock)
         {
-            if (product == null)
-                throw new ArgumentNullException("product");
+            var isMinimumStockReached = totalStock <= product.MinStockQuantity;
 
-            product.Deleted = true;
-            //delete product
-            UpdateProduct(product);
-        }
+            if (!isMinimumStockReached && !_catalogSettings.PublishBackProductWhenCancellingOrders)
+                return;
 
-        /// <summary>
-        /// Gets all products displayed on the home page
-        /// </summary>
-        /// <returns>Products</returns>
-        public virtual IList<Product> GetAllProductsDisplayedOnHomePage()
-        {
-            var query = from p in _productRepository.Table
-                        orderby p.DisplayOrder, p.Name
-                        where p.Published &&
-                        !p.Deleted &&
-                        p.ShowOnHomePage
-                        select p;
-            var products = query.ToList();
-            return products;
-        }
-        
-        /// <summary>
-        /// Gets product
-        /// </summary>
-        /// <param name="productId">Product identifier</param>
-        /// <returns>Product</returns>
-        public virtual Product GetProductById(int productId)
-        {
-            if (productId == 0)
-                return null;
-            
-            string key = string.Format(PRODUCTS_BY_ID_KEY, productId);
-            return _cacheManager.Get(key, () => _productRepository.GetById(productId));
-        }
-
-        /// <summary>
-        /// Get products by identifiers
-        /// </summary>
-        /// <param name="productIds">Product identifiers</param>
-        /// <returns>Products</returns>
-        public virtual IList<Product> GetProductsByIds(int[] productIds)
-        {
-            if (productIds == null || productIds.Length == 0)
-                return new List<Product>();
-
-            var query = from p in _productRepository.Table
-                        where productIds.Contains(p.Id)
-                        select p;
-            var products = query.ToList();
-            //sort by passed identifiers
-            var sortedProducts = new List<Product>();
-            foreach (int id in productIds)
+            switch (product.LowStockActivity)
             {
-                var product = products.Find(x => x.Id == id);
-                if (product != null)
-                    sortedProducts.Add(product);
+                case LowStockActivity.DisableBuyButton:
+                    product.DisableBuyButton = isMinimumStockReached;
+                    product.DisableWishlistButton = isMinimumStockReached;
+                    await UpdateProductAsync(product);
+                    break;
+
+                case LowStockActivity.Unpublish:
+                    product.Published = !isMinimumStockReached;
+                    await UpdateProductAsync(product);
+                    break;
+
+                default:
+                    break;
             }
-            return sortedProducts;
         }
 
         /// <summary>
-        /// Inserts a product
+        /// Gets SKU, Manufacturer part number and GTIN
         /// </summary>
         /// <param name="product">Product</param>
-        public virtual void InsertProduct(Product product)
+        /// <param name="attributesXml">Attributes in XML format</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the sKU, Manufacturer part number, GTIN
+        /// </returns>
+        protected virtual async Task<(string sku, string manufacturerPartNumber, string gtin)> GetSkuMpnGtinAsync(Product product, string attributesXml)
         {
             if (product == null)
-                throw new ArgumentNullException("product");
+                throw new ArgumentNullException(nameof(product));
 
-            //insert
-            _productRepository.Insert(product);
+            string sku = null;
+            string manufacturerPartNumber = null;
+            string gtin = null;
 
-            //clear cache
-            _cacheManager.RemoveByPattern(PRODUCTS_PATTERN_KEY);
-            
-            //event notification
-            _eventPublisher.EntityInserted(product);
-        }
-
-        /// <summary>
-        /// Updates the product
-        /// </summary>
-        /// <param name="product">Product</param>
-        public virtual void UpdateProduct(Product product)
-        {
-            if (product == null)
-                throw new ArgumentNullException("product");
-
-            //update
-            _productRepository.Update(product);
-
-            //cache
-            _cacheManager.RemoveByPattern(PRODUCTS_PATTERN_KEY);
-
-            //event notification
-            _eventPublisher.EntityUpdated(product);
-        }
-
-        /// <summary>
-        /// Get (visible) product number in certain category
-        /// </summary>
-        /// <param name="categoryIds">Category identifiers</param>
-        /// <param name="storeId">Store identifier; 0 to load all records</param>
-        /// <returns>Product number</returns>
-        public virtual int GetCategoryProductNumber(IList<int> categoryIds = null, int storeId = 0)
-        {
-            //validate "categoryIds" parameter
-            if (categoryIds != null && categoryIds.Contains(0))
-                categoryIds.Remove(0);
-
-            var query = _productRepository.Table;
-            query = query.Where(p => !p.Deleted && p.Published && p.VisibleIndividually);
-
-            //category filtering
-            if (categoryIds != null && categoryIds.Count > 0)
+            if (!string.IsNullOrEmpty(attributesXml) &&
+                product.ManageInventoryMethod == ManageInventoryMethod.ManageStockByAttributes)
             {
-                query = from p in query
-                        from pc in p.ProductCategories.Where(pc => categoryIds.Contains(pc.CategoryId))
-                        select p;
-            }
-
-            if (!_catalogSettings.IgnoreAcl)
-            {
-                //Access control list. Allowed customer roles
-                var allowedCustomerRolesIds = _workContext.CurrentCustomer.GetCustomerRoleIds();
-
-                query = from p in query
-                        join acl in _aclRepository.Table
-                        on new { c1 = p.Id, c2 = "Product" } equals new { c1 = acl.EntityId, c2 = acl.EntityName } into p_acl
-                        from acl in p_acl.DefaultIfEmpty()
-                        where !p.SubjectToAcl || allowedCustomerRolesIds.Contains(acl.CustomerRoleId)
-                        select p;
-            }
-
-            if (storeId > 0 && !_catalogSettings.IgnoreStoreLimitations)
-            {
-                query = from p in query
-                        join sm in _storeMappingRepository.Table
-                        on new { c1 = p.Id, c2 = "Product" } equals new { c1 = sm.EntityId, c2 = sm.EntityName } into p_sm
-                        from sm in p_sm.DefaultIfEmpty()
-                        where !p.LimitedToStores || storeId == sm.StoreId
-                        select p;
-            }
-
-            //only distinct products
-            var result = query.Select(p => p.Id).Distinct().Count();
-            return result;
-        }
-
-        /// <summary>
-        /// Search products
-        /// </summary>
-        /// <param name="pageIndex">Page index</param>
-        /// <param name="pageSize">Page size</param>
-        /// <param name="categoryIds">Category identifiers</param>
-        /// <param name="manufacturerId">Manufacturer identifier; 0 to load all records</param>
-        /// <param name="storeId">Store identifier; 0 to load all records</param>
-        /// <param name="vendorId">Vendor identifier; 0 to load all records</param>
-        /// <param name="warehouseId">Warehouse identifier; 0 to load all records</param>
-        /// <param name="productType">Product type; 0 to load all records</param>
-        /// <param name="visibleIndividuallyOnly">A values indicating whether to load only products marked as "visible individually"; "false" to load all records; "true" to load "visible individually" only</param>
-        /// <param name="markedAsNewOnly">A values indicating whether to load only products marked as "new"; "false" to load all records; "true" to load "marked as new" only</param>
-        /// <param name="featuredProducts">A value indicating whether loaded products are marked as featured (relates only to categories and manufacturers). 0 to load featured products only, 1 to load not featured products only, null to load all products</param>
-        /// <param name="priceMin">Minimum price; null to load all records</param>
-        /// <param name="priceMax">Maximum price; null to load all records</param>
-        /// <param name="productTagId">Product tag identifier; 0 to load all records</param>
-        /// <param name="keywords">Keywords</param>
-        /// <param name="searchDescriptions">A value indicating whether to search by a specified "keyword" in product descriptions</param>
-        /// <param name="searchSku">A value indicating whether to search by a specified "keyword" in product SKU</param>
-        /// <param name="searchProductTags">A value indicating whether to search by a specified "keyword" in product tags</param>
-        /// <param name="languageId">Language identifier (search for text searching)</param>
-        /// <param name="filteredSpecs">Filtered product specification identifiers</param>
-        /// <param name="orderBy">Order by</param>
-        /// <param name="showHidden">A value indicating whether to show hidden records</param>
-        /// <param name="overridePublished">
-        /// null - process "Published" property according to "showHidden" parameter
-        /// true - load only "Published" products
-        /// false - load only "Unpublished" products
-        /// </param>
-        /// <returns>Products</returns>
-        public virtual IPagedList<Product> SearchProducts(
-            int pageIndex = 0,
-            int pageSize = int.MaxValue,
-            IList<int> categoryIds = null,
-            int manufacturerId = 0,
-            int storeId = 0,
-            int vendorId = 0,
-            int warehouseId = 0,
-            ProductType? productType = null,
-            bool visibleIndividuallyOnly = false,
-            bool markedAsNewOnly = false,
-            bool? featuredProducts = null,
-            decimal? priceMin = null,
-            decimal? priceMax = null,
-            int productTagId = 0,
-            string keywords = null,
-            bool searchDescriptions = false,
-            bool searchSku = true,
-            bool searchProductTags = false,
-            int languageId = 0,
-            IList<int> filteredSpecs = null,
-            ProductSortingEnum orderBy = ProductSortingEnum.Position,
-            bool showHidden = false,
-            bool? overridePublished = null)
-        {
-            IList<int> filterableSpecificationAttributeOptionIds;
-            return SearchProducts(out filterableSpecificationAttributeOptionIds, false,
-                pageIndex, pageSize, categoryIds, manufacturerId,
-                storeId, vendorId, warehouseId,
-                productType, visibleIndividuallyOnly, markedAsNewOnly, featuredProducts,
-                priceMin, priceMax, productTagId, keywords, searchDescriptions, searchSku,
-                searchProductTags, languageId, filteredSpecs, 
-                orderBy, showHidden, overridePublished);
-        }
-
-        /// <summary>
-        /// Search products
-        /// </summary>
-        /// <param name="filterableSpecificationAttributeOptionIds">The specification attribute option identifiers applied to loaded products (all pages)</param>
-        /// <param name="loadFilterableSpecificationAttributeOptionIds">A value indicating whether we should load the specification attribute option identifiers applied to loaded products (all pages)</param>
-        /// <param name="pageIndex">Page index</param>
-        /// <param name="pageSize">Page size</param>
-        /// <param name="categoryIds">Category identifiers</param>
-        /// <param name="manufacturerId">Manufacturer identifier; 0 to load all records</param>
-        /// <param name="storeId">Store identifier; 0 to load all records</param>
-        /// <param name="vendorId">Vendor identifier; 0 to load all records</param>
-        /// <param name="warehouseId">Warehouse identifier; 0 to load all records</param>
-        /// <param name="productType">Product type; 0 to load all records</param>
-        /// <param name="visibleIndividuallyOnly">A values indicating whether to load only products marked as "visible individually"; "false" to load all records; "true" to load "visible individually" only</param>
-        /// <param name="markedAsNewOnly">A values indicating whether to load only products marked as "new"; "false" to load all records; "true" to load "marked as new" only</param>
-        /// <param name="featuredProducts">A value indicating whether loaded products are marked as featured (relates only to categories and manufacturers). 0 to load featured products only, 1 to load not featured products only, null to load all products</param>
-        /// <param name="priceMin">Minimum price; null to load all records</param>
-        /// <param name="priceMax">Maximum price; null to load all records</param>
-        /// <param name="productTagId">Product tag identifier; 0 to load all records</param>
-        /// <param name="keywords">Keywords</param>
-        /// <param name="searchDescriptions">A value indicating whether to search by a specified "keyword" in product descriptions</param>
-        /// <param name="searchSku">A value indicating whether to search by a specified "keyword" in product SKU</param>
-        /// <param name="searchProductTags">A value indicating whether to search by a specified "keyword" in product tags</param>
-        /// <param name="languageId">Language identifier (search for text searching)</param>
-        /// <param name="filteredSpecs">Filtered product specification identifiers</param>
-        /// <param name="orderBy">Order by</param>
-        /// <param name="showHidden">A value indicating whether to show hidden records</param>
-        /// <param name="overridePublished">
-        /// null - process "Published" property according to "showHidden" parameter
-        /// true - load only "Published" products
-        /// false - load only "Unpublished" products
-        /// </param>
-        /// <returns>Products</returns>
-        public virtual IPagedList<Product> SearchProducts(
-            out IList<int> filterableSpecificationAttributeOptionIds,
-            bool loadFilterableSpecificationAttributeOptionIds = false,
-            int pageIndex = 0,
-            int pageSize = 2147483647,  //Int32.MaxValue
-            IList<int> categoryIds = null,
-            int manufacturerId = 0,
-            int storeId = 0,
-            int vendorId = 0,
-            int warehouseId = 0,
-            ProductType? productType = null,
-            bool visibleIndividuallyOnly = false,
-            bool markedAsNewOnly = false,
-            bool? featuredProducts = null,
-            decimal? priceMin = null,
-            decimal? priceMax = null,
-            int productTagId = 0,
-            string keywords = null,
-            bool searchDescriptions = false,
-            bool searchSku = true,
-            bool searchProductTags = false,
-            int languageId = 0,
-            IList<int> filteredSpecs = null,
-            ProductSortingEnum orderBy = ProductSortingEnum.Position,
-            bool showHidden = false,
-            bool? overridePublished = null)
-        {
-            filterableSpecificationAttributeOptionIds = new List<int>();
-
-            //search by keyword
-            bool searchLocalizedValue = false;
-            if (languageId > 0)
-            {
-                if (showHidden)
+                //manage stock by attribute combinations
+                //let's find appropriate record
+                var combination = await _productAttributeParser.FindProductAttributeCombinationAsync(product, attributesXml);
+                if (combination != null)
                 {
-                    searchLocalizedValue = true;
+                    sku = combination.Sku;
+                    manufacturerPartNumber = combination.ManufacturerPartNumber;
+                    gtin = combination.Gtin;
+                }
+            }
+
+            if (string.IsNullOrEmpty(sku))
+                sku = product.Sku;
+            if (string.IsNullOrEmpty(manufacturerPartNumber))
+                manufacturerPartNumber = product.ManufacturerPartNumber;
+            if (string.IsNullOrEmpty(gtin))
+                gtin = product.Gtin;
+
+            return (sku, manufacturerPartNumber, gtin);
+        }
+
+        /// <summary>
+        /// Get stock message for a product with attributes
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <param name="attributesXml">Attributes in XML format</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the message
+        /// </returns>
+        protected virtual async Task<string> GetStockMessageForAttributesAsync(Product product, string attributesXml)
+        {
+            if (!product.DisplayStockAvailability)
+                return string.Empty;
+
+            string stockMessage;
+
+            var combination = await _productAttributeParser.FindProductAttributeCombinationAsync(product, attributesXml);
+            if (combination != null)
+            {
+                //combination exists
+                var stockQuantity = combination.StockQuantity;
+                if (stockQuantity > 0)
+                {
+                    if (product.MinStockQuantity >= stockQuantity && product.LowStockActivity == LowStockActivity.Nothing)
+                    {
+                        stockMessage = product.DisplayStockQuantity
+                        ?
+                        //display "low stock" with stock quantity
+                        string.Format(await _localizationService.GetResourceAsync("Products.Availability.LowStockWithQuantity"), stockQuantity)
+                        :
+                        //display "low stock" without stock quantity
+                        await _localizationService.GetResourceAsync("Products.Availability.LowStock");
+                    }
+                    else
+                    {
+                        stockMessage = product.DisplayStockQuantity
+                        ?
+                        //display "in stock" with stock quantity
+                        string.Format(await _localizationService.GetResourceAsync("Products.Availability.InStockWithQuantity"), stockQuantity)
+                        :
+                        //display "in stock" without stock quantity
+                        await _localizationService.GetResourceAsync("Products.Availability.InStock");
+                    }
                 }
                 else
                 {
-                    //ensure that we have at least two published languages
-                    var totalPublishedLanguages = _languageService.GetAllLanguages().Count;
-                    searchLocalizedValue = totalPublishedLanguages >= 2;
+                    if (combination.AllowOutOfStockOrders)
+                    {
+                        stockMessage = await _localizationService.GetResourceAsync("Products.Availability.InStock");
+                    }
+                    else
+                    {
+                        var productAvailabilityRange = await
+                            _dateRangeService.GetProductAvailabilityRangeByIdAsync(product.ProductAvailabilityRangeId);
+                        stockMessage = productAvailabilityRange == null
+                            ? await _localizationService.GetResourceAsync("Products.Availability.OutOfStock")
+                            : string.Format(await _localizationService.GetResourceAsync("Products.Availability.AvailabilityRange"),
+                                await _localizationService.GetLocalizedAsync(productAvailabilityRange, range => range.Name));
+                    }
                 }
-            }
-
-            //validate "categoryIds" parameter
-            if (categoryIds !=null && categoryIds.Contains(0))
-                categoryIds.Remove(0);
-
-            //Access control list. Allowed customer roles
-            var allowedCustomerRolesIds = _workContext.CurrentCustomer.GetCustomerRoleIds();
-
-            if (_commonSettings.UseStoredProceduresIfSupported && _dataProvider.StoredProceduredSupported)
-            {
-                //stored procedures are enabled and supported by the database. 
-                //It's much faster than the LINQ implementation below 
-
-                #region Use stored procedure
-                
-                //pass category identifiers as comma-delimited string
-                string commaSeparatedCategoryIds = categoryIds == null ? "" : string.Join(",", categoryIds);
-
-
-                //pass customer role identifiers as comma-delimited string
-                string commaSeparatedAllowedCustomerRoleIds = string.Join(",", allowedCustomerRolesIds);
-
-
-                //pass specification identifiers as comma-delimited string
-                string commaSeparatedSpecIds = "";
-                if (filteredSpecs != null)
-                {
-                    ((List<int>)filteredSpecs).Sort();
-                    commaSeparatedSpecIds = string.Join(",", filteredSpecs);
-                }
-
-                //some databases don't support int.MaxValue
-                if (pageSize == int.MaxValue)
-                    pageSize = int.MaxValue - 1;
-                
-                //prepare parameters
-                var pCategoryIds = _dataProvider.GetParameter();
-                pCategoryIds.ParameterName = "CategoryIds";
-                pCategoryIds.Value = commaSeparatedCategoryIds != null ? (object)commaSeparatedCategoryIds : DBNull.Value;
-                pCategoryIds.DbType = DbType.String;
-                
-                var pManufacturerId = _dataProvider.GetParameter();
-                pManufacturerId.ParameterName = "ManufacturerId";
-                pManufacturerId.Value = manufacturerId;
-                pManufacturerId.DbType = DbType.Int32;
-
-                var pStoreId = _dataProvider.GetParameter();
-                pStoreId.ParameterName = "StoreId";
-                pStoreId.Value = !_catalogSettings.IgnoreStoreLimitations ? storeId : 0;
-                pStoreId.DbType = DbType.Int32;
-
-                var pVendorId = _dataProvider.GetParameter();
-                pVendorId.ParameterName = "VendorId";
-                pVendorId.Value = vendorId;
-                pVendorId.DbType = DbType.Int32;
-
-                var pWarehouseId = _dataProvider.GetParameter();
-                pWarehouseId.ParameterName = "WarehouseId";
-                pWarehouseId.Value = warehouseId;
-                pWarehouseId.DbType = DbType.Int32;
-
-                var pProductTypeId = _dataProvider.GetParameter();
-                pProductTypeId.ParameterName = "ProductTypeId";
-                pProductTypeId.Value = productType.HasValue ? (object)productType.Value : DBNull.Value;
-                pProductTypeId.DbType = DbType.Int32;
-
-                var pVisibleIndividuallyOnly = _dataProvider.GetParameter();
-                pVisibleIndividuallyOnly.ParameterName = "VisibleIndividuallyOnly";
-                pVisibleIndividuallyOnly.Value = visibleIndividuallyOnly;
-                pVisibleIndividuallyOnly.DbType = DbType.Int32;
-
-                var pMarkedAsNewOnly = _dataProvider.GetParameter();
-                pMarkedAsNewOnly.ParameterName = "MarkedAsNewOnly";
-                pMarkedAsNewOnly.Value = markedAsNewOnly;
-                pMarkedAsNewOnly.DbType = DbType.Int32;
-
-                var pProductTagId = _dataProvider.GetParameter();
-                pProductTagId.ParameterName = "ProductTagId";
-                pProductTagId.Value = productTagId;
-                pProductTagId.DbType = DbType.Int32;
-
-                var pFeaturedProducts = _dataProvider.GetParameter();
-                pFeaturedProducts.ParameterName = "FeaturedProducts";
-                pFeaturedProducts.Value = featuredProducts.HasValue ? (object)featuredProducts.Value : DBNull.Value;
-                pFeaturedProducts.DbType = DbType.Boolean;
-
-                var pPriceMin = _dataProvider.GetParameter();
-                pPriceMin.ParameterName = "PriceMin";
-                pPriceMin.Value = priceMin.HasValue ? (object)priceMin.Value : DBNull.Value;
-                pPriceMin.DbType = DbType.Decimal;
-                
-                var pPriceMax = _dataProvider.GetParameter();
-                pPriceMax.ParameterName = "PriceMax";
-                pPriceMax.Value = priceMax.HasValue ? (object)priceMax.Value : DBNull.Value;
-                pPriceMax.DbType = DbType.Decimal;
-
-                var pKeywords = _dataProvider.GetParameter();
-                pKeywords.ParameterName = "Keywords";
-                pKeywords.Value = keywords != null ? (object)keywords : DBNull.Value;
-                pKeywords.DbType = DbType.String;
-
-                var pSearchDescriptions = _dataProvider.GetParameter();
-                pSearchDescriptions.ParameterName = "SearchDescriptions";
-                pSearchDescriptions.Value = searchDescriptions;
-                pSearchDescriptions.DbType = DbType.Boolean;
-
-                var pSearchSku = _dataProvider.GetParameter();
-                pSearchSku.ParameterName = "SearchSku";
-                pSearchSku.Value = searchSku;
-                pSearchSku.DbType = DbType.Boolean;
-
-                var pSearchProductTags = _dataProvider.GetParameter();
-                pSearchProductTags.ParameterName = "SearchProductTags";
-                pSearchProductTags.Value = searchProductTags;
-                pSearchProductTags.DbType = DbType.Boolean;
-
-                var pUseFullTextSearch = _dataProvider.GetParameter();
-                pUseFullTextSearch.ParameterName = "UseFullTextSearch";
-                pUseFullTextSearch.Value = _commonSettings.UseFullTextSearch;
-                pUseFullTextSearch.DbType = DbType.Boolean;
-
-                var pFullTextMode = _dataProvider.GetParameter();
-                pFullTextMode.ParameterName = "FullTextMode";
-                pFullTextMode.Value = (int)_commonSettings.FullTextMode;
-                pFullTextMode.DbType = DbType.Int32;
-
-                var pFilteredSpecs = _dataProvider.GetParameter();
-                pFilteredSpecs.ParameterName = "FilteredSpecs";
-                pFilteredSpecs.Value = commaSeparatedSpecIds != null ? (object)commaSeparatedSpecIds : DBNull.Value;
-                pFilteredSpecs.DbType = DbType.String;
-
-                var pLanguageId = _dataProvider.GetParameter();
-                pLanguageId.ParameterName = "LanguageId";
-                pLanguageId.Value = searchLocalizedValue ? languageId : 0;
-                pLanguageId.DbType = DbType.Int32;
-
-                var pOrderBy = _dataProvider.GetParameter();
-                pOrderBy.ParameterName = "OrderBy";
-                pOrderBy.Value = (int)orderBy;
-                pOrderBy.DbType = DbType.Int32;
-
-                var pAllowedCustomerRoleIds = _dataProvider.GetParameter();
-                pAllowedCustomerRoleIds.ParameterName = "AllowedCustomerRoleIds";
-                pAllowedCustomerRoleIds.Value = commaSeparatedAllowedCustomerRoleIds;
-                pAllowedCustomerRoleIds.DbType = DbType.String;
-
-                var pPageIndex = _dataProvider.GetParameter();
-                pPageIndex.ParameterName = "PageIndex";
-                pPageIndex.Value = pageIndex;
-                pPageIndex.DbType = DbType.Int32;
-
-                var pPageSize = _dataProvider.GetParameter();
-                pPageSize.ParameterName = "PageSize";
-                pPageSize.Value = pageSize;
-                pPageSize.DbType = DbType.Int32;
-
-                var pShowHidden = _dataProvider.GetParameter();
-                pShowHidden.ParameterName = "ShowHidden";
-                pShowHidden.Value = showHidden;
-                pShowHidden.DbType = DbType.Boolean;
-
-                var pOverridePublished = _dataProvider.GetParameter();
-                pOverridePublished.ParameterName = "OverridePublished";
-                pOverridePublished.Value = overridePublished != null ? (object)overridePublished.Value : DBNull.Value;
-                pOverridePublished.DbType = DbType.Boolean;
-
-                var pLoadFilterableSpecificationAttributeOptionIds = _dataProvider.GetParameter();
-                pLoadFilterableSpecificationAttributeOptionIds.ParameterName = "LoadFilterableSpecificationAttributeOptionIds";
-                pLoadFilterableSpecificationAttributeOptionIds.Value = loadFilterableSpecificationAttributeOptionIds;
-                pLoadFilterableSpecificationAttributeOptionIds.DbType = DbType.Boolean;
-                
-                var pFilterableSpecificationAttributeOptionIds = _dataProvider.GetParameter();
-                pFilterableSpecificationAttributeOptionIds.ParameterName = "FilterableSpecificationAttributeOptionIds";
-                pFilterableSpecificationAttributeOptionIds.Direction = ParameterDirection.Output;
-                pFilterableSpecificationAttributeOptionIds.Size = int.MaxValue - 1;
-                pFilterableSpecificationAttributeOptionIds.DbType = DbType.String;
-
-                var pTotalRecords = _dataProvider.GetParameter();
-                pTotalRecords.ParameterName = "TotalRecords";
-                pTotalRecords.Direction = ParameterDirection.Output;
-                pTotalRecords.DbType = DbType.Int32;
-
-                //invoke stored procedure
-                var products = _dbContext.ExecuteStoredProcedureList<Product>(
-                    "ProductLoadAllPaged",
-                    pCategoryIds,
-                    pManufacturerId,
-                    pStoreId,
-                    pVendorId,
-                    pWarehouseId,
-                    pProductTypeId,
-                    pVisibleIndividuallyOnly,
-                    pMarkedAsNewOnly,
-                    pProductTagId,
-                    pFeaturedProducts,
-                    pPriceMin,
-                    pPriceMax,
-                    pKeywords,
-                    pSearchDescriptions,
-                    pSearchSku,
-                    pSearchProductTags,
-                    pUseFullTextSearch,
-                    pFullTextMode,
-                    pFilteredSpecs,
-                    pLanguageId,
-                    pOrderBy,
-                    pAllowedCustomerRoleIds,
-                    pPageIndex,
-                    pPageSize,
-                    pShowHidden,
-                    pOverridePublished,
-                    pLoadFilterableSpecificationAttributeOptionIds,
-                    pFilterableSpecificationAttributeOptionIds,
-                    pTotalRecords);
-                //get filterable specification attribute option identifier
-                string filterableSpecificationAttributeOptionIdsStr = (pFilterableSpecificationAttributeOptionIds.Value != DBNull.Value) ? (string)pFilterableSpecificationAttributeOptionIds.Value : "";
-                if (loadFilterableSpecificationAttributeOptionIds &&
-                    !string.IsNullOrWhiteSpace(filterableSpecificationAttributeOptionIdsStr))
-                {
-                     filterableSpecificationAttributeOptionIds = filterableSpecificationAttributeOptionIdsStr
-                        .Split(new[] {','}, StringSplitOptions.RemoveEmptyEntries)
-                        .Select(x => Convert.ToInt32(x.Trim()))
-                        .ToList();
-                }
-                //return products
-                int totalRecords = (pTotalRecords.Value != DBNull.Value) ? Convert.ToInt32(pTotalRecords.Value) : 0;
-                return new PagedList<Product>(products, pageIndex, pageSize, totalRecords);
-
-                #endregion
             }
             else
             {
-                //stored procedures aren't supported. Use LINQ
-
-                #region Search products
-
-                //products
-                var query = _productRepository.Table;
-                query = query.Where(p => !p.Deleted);
-                if (!overridePublished.HasValue)
+                //no combination configured
+                if (product.AllowAddingOnlyExistingAttributeCombinations)
                 {
-                    //process according to "showHidden"
-                    if (!showHidden)
-                    {
-                        query = query.Where(p => p.Published);
-                    }
-                }
-                else if (overridePublished.Value)
-                {
-                    //published only
-                    query = query.Where(p => p.Published);
-                }
-                else if (!overridePublished.Value)
-                {
-                    //unpublished only
-                    query = query.Where(p => !p.Published);
-                }
-                if (visibleIndividuallyOnly)
-                {
-                    query = query.Where(p => p.VisibleIndividually);
-                }
-                //The function 'CurrentUtcDateTime' is not supported by SQL Server Compact. 
-                //That's why we pass the date value
-                var nowUtc = DateTime.UtcNow;
-                if (markedAsNewOnly)
-                {
-                    query = query.Where(p => p.MarkAsNew);
-                    query = query.Where(p =>
-                        (!p.MarkAsNewStartDateTimeUtc.HasValue || p.MarkAsNewStartDateTimeUtc.Value < nowUtc) &&
-                        (!p.MarkAsNewEndDateTimeUtc.HasValue || p.MarkAsNewEndDateTimeUtc.Value > nowUtc));
-                }
-                if (productType.HasValue)
-                {
-                    var productTypeId = (int) productType.Value;
-                    query = query.Where(p => p.ProductTypeId == productTypeId);
-                }
+                    var allIds = (await _productAttributeService.GetProductAttributeMappingsByProductIdAsync(product.Id)).Where(pa => pa.IsRequired).Select(pa => pa.Id).ToList();
+                    var exIds = (await _productAttributeParser.ParseProductAttributeMappingsAsync(attributesXml)).Select(pa => pa.Id).ToList();
 
-                if (priceMin.HasValue)
-                {
-                    //min price
-                    query = query.Where(p =>
-                                        //special price (specified price and valid date range)
-                                        ((p.SpecialPrice.HasValue &&
-                                          ((!p.SpecialPriceStartDateTimeUtc.HasValue ||
-                                            p.SpecialPriceStartDateTimeUtc.Value < nowUtc) &&
-                                           (!p.SpecialPriceEndDateTimeUtc.HasValue ||
-                                            p.SpecialPriceEndDateTimeUtc.Value > nowUtc))) &&
-                                         (p.SpecialPrice >= priceMin.Value))
-                                        ||
-                                        //regular price (price isn't specified or date range isn't valid)
-                                        ((!p.SpecialPrice.HasValue ||
-                                          ((p.SpecialPriceStartDateTimeUtc.HasValue &&
-                                            p.SpecialPriceStartDateTimeUtc.Value > nowUtc) ||
-                                           (p.SpecialPriceEndDateTimeUtc.HasValue &&
-                                            p.SpecialPriceEndDateTimeUtc.Value < nowUtc))) &&
-                                         (p.Price >= priceMin.Value)));
-                }
-                if (priceMax.HasValue)
-                {
-                    //max price
-                    query = query.Where(p =>
-                                        //special price (specified price and valid date range)
-                                        ((p.SpecialPrice.HasValue &&
-                                          ((!p.SpecialPriceStartDateTimeUtc.HasValue ||
-                                            p.SpecialPriceStartDateTimeUtc.Value < nowUtc) &&
-                                           (!p.SpecialPriceEndDateTimeUtc.HasValue ||
-                                            p.SpecialPriceEndDateTimeUtc.Value > nowUtc))) &&
-                                         (p.SpecialPrice <= priceMax.Value))
-                                        ||
-                                        //regular price (price isn't specified or date range isn't valid)
-                                        ((!p.SpecialPrice.HasValue ||
-                                          ((p.SpecialPriceStartDateTimeUtc.HasValue &&
-                                            p.SpecialPriceStartDateTimeUtc.Value > nowUtc) ||
-                                           (p.SpecialPriceEndDateTimeUtc.HasValue &&
-                                            p.SpecialPriceEndDateTimeUtc.Value < nowUtc))) &&
-                                         (p.Price <= priceMax.Value)));
-                }
-                if (!showHidden)
-                {
-                    //available dates
-                    query = query.Where(p =>
-                        (!p.AvailableStartDateTimeUtc.HasValue || p.AvailableStartDateTimeUtc.Value < nowUtc) &&
-                        (!p.AvailableEndDateTimeUtc.HasValue || p.AvailableEndDateTimeUtc.Value > nowUtc));
-                }
+                    var selectedIds = allIds.Intersect(exIds).ToList();
 
-                //searching by keyword
-                if (!String.IsNullOrWhiteSpace(keywords))
-                {
-                    query = from p in query
-                            join lp in _localizedPropertyRepository.Table on p.Id equals lp.EntityId into p_lp
-                            from lp in p_lp.DefaultIfEmpty()
-                            from pt in p.ProductTags.DefaultIfEmpty()
-                            where (p.Name.Contains(keywords)) ||
-                                  (searchDescriptions && p.ShortDescription.Contains(keywords)) ||
-                                  (searchDescriptions && p.FullDescription.Contains(keywords)) ||
-                                  (searchProductTags && pt.Name.Contains(keywords)) ||
-                                  //localized values
-                                  (searchLocalizedValue && lp.LanguageId == languageId && lp.LocaleKeyGroup == "Product" && lp.LocaleKey == "Name" && lp.LocaleValue.Contains(keywords)) ||
-                                  (searchDescriptions && searchLocalizedValue && lp.LanguageId == languageId && lp.LocaleKeyGroup == "Product" && lp.LocaleKey == "ShortDescription" && lp.LocaleValue.Contains(keywords)) ||
-                                  (searchDescriptions && searchLocalizedValue && lp.LanguageId == languageId && lp.LocaleKeyGroup == "Product" && lp.LocaleKey == "FullDescription" && lp.LocaleValue.Contains(keywords))
-                            select p;
-                }
-
-                if (!showHidden && !_catalogSettings.IgnoreAcl)
-                {
-                    //ACL (access control list)
-                    query = from p in query
-                            join acl in _aclRepository.Table
-                            on new { c1 = p.Id, c2 = "Product" } equals new { c1 = acl.EntityId, c2 = acl.EntityName } into p_acl
-                            from acl in p_acl.DefaultIfEmpty()
-                            where !p.SubjectToAcl || allowedCustomerRolesIds.Contains(acl.CustomerRoleId)
-                            select p;
-                }
-
-                if (storeId > 0 && !_catalogSettings.IgnoreStoreLimitations)
-                {
-                    //Store mapping
-                    query = from p in query
-                            join sm in _storeMappingRepository.Table
-                            on new { c1 = p.Id, c2 = "Product" } equals new { c1 = sm.EntityId, c2 = sm.EntityName } into p_sm
-                            from sm in p_sm.DefaultIfEmpty()
-                            where !p.LimitedToStores || storeId == sm.StoreId
-                            select p;
-                }
-                
-                //search by specs
-                if (filteredSpecs != null && filteredSpecs.Count > 0)
-                {
-                    query = from p in query
-                            where !filteredSpecs
-                                       .Except(
-                                           p.ProductSpecificationAttributes.Where(psa => psa.AllowFiltering).Select(
-                                               psa => psa.SpecificationAttributeOptionId))
-                                       .Any()
-                            select p;
-                }
-
-                //category filtering
-                if (categoryIds != null && categoryIds.Count > 0)
-                {
-                    query = from p in query
-                            from pc in p.ProductCategories.Where(pc => categoryIds.Contains(pc.CategoryId))
-                            where (!featuredProducts.HasValue || featuredProducts.Value == pc.IsFeaturedProduct)
-                            select p;
-                }
-
-                //manufacturer filtering
-                if (manufacturerId > 0)
-                {
-                    query = from p in query
-                            from pm in p.ProductManufacturers.Where(pm => pm.ManufacturerId == manufacturerId)
-                            where (!featuredProducts.HasValue || featuredProducts.Value == pm.IsFeaturedProduct)
-                            select p;
-                }
-
-                //vendor filtering
-                if (vendorId > 0)
-                {
-                    query = query.Where(p => p.VendorId == vendorId);
-                }
-
-                //warehouse filtering
-                if (warehouseId > 0)
-                {
-                    var manageStockInventoryMethodId = (int)ManageInventoryMethod.ManageStock;
-                    query = query.Where(p =>
-                        //"Use multiple warehouses" enabled
-                        //we search in each warehouse
-                        (p.ManageInventoryMethodId == manageStockInventoryMethodId &&
-                         p.UseMultipleWarehouses &&
-                         p.ProductWarehouseInventory.Any(pwi => pwi.WarehouseId == warehouseId))
-                        ||
-                        //"Use multiple warehouses" disabled
-                        //we use standard "warehouse" property
-                        ((p.ManageInventoryMethodId != manageStockInventoryMethodId ||
-                          !p.UseMultipleWarehouses) &&
-                          p.WarehouseId == warehouseId));
-                }
-
-                //related products filtering
-                //if (relatedToProductId > 0)
-                //{
-                //    query = from p in query
-                //            join rp in _relatedProductRepository.Table on p.Id equals rp.ProductId2
-                //            where (relatedToProductId == rp.ProductId1)
-                //            select p;
-                //}
-
-                //tag filtering
-                if (productTagId > 0)
-                {
-                    query = from p in query
-                            from pt in p.ProductTags.Where(pt => pt.Id == productTagId)
-                            select p;
-                }
-
-                //only distinct products (group by ID)
-                //if we use standard Distinct() method, then all fields will be compared (low performance)
-                //it'll not work in SQL Server Compact when searching products by a keyword)
-                query = from p in query
-                        group p by p.Id
-                        into pGroup
-                        orderby pGroup.Key
-                        select pGroup.FirstOrDefault();
-
-                //sort products
-                if (orderBy == ProductSortingEnum.Position && categoryIds != null && categoryIds.Count > 0)
-                {
-                    //category position
-                    var firstCategoryId = categoryIds[0];
-                    query = query.OrderBy(p => p.ProductCategories.FirstOrDefault(pc => pc.CategoryId == firstCategoryId).DisplayOrder);
-                }
-                else if (orderBy == ProductSortingEnum.Position && manufacturerId > 0)
-                {
-                    //manufacturer position
-                    query = 
-                        query.OrderBy(p => p.ProductManufacturers.FirstOrDefault(pm => pm.ManufacturerId == manufacturerId).DisplayOrder);
-                }
-                else if (orderBy == ProductSortingEnum.Position)
-                {
-                    //otherwise sort by name
-                    query = query.OrderBy(p => p.Name);
-                }
-                else if (orderBy == ProductSortingEnum.NameAsc)
-                {
-                    //Name: A to Z
-                    query = query.OrderBy(p => p.Name);
-                }
-                else if (orderBy == ProductSortingEnum.NameDesc)
-                {
-                    //Name: Z to A
-                    query = query.OrderByDescending(p => p.Name);
-                }
-                else if (orderBy == ProductSortingEnum.PriceAsc)
-                {
-                    //Price: Low to High
-                    query = query.OrderBy(p => p.Price);
-                }
-                else if (orderBy == ProductSortingEnum.PriceDesc)
-                {
-                    //Price: High to Low
-                    query = query.OrderByDescending(p => p.Price);
-                }
-                else if (orderBy == ProductSortingEnum.CreatedOn)
-                {
-                    //creation date
-                    query = query.OrderByDescending(p => p.CreatedOnUtc);
-                }
-                else
-                {
-                    //actually this code is not reachable
-                    query = query.OrderBy(p => p.Name);
-                }
-
-                var products = new PagedList<Product>(query, pageIndex, pageSize);
-
-                //get filterable specification attribute option identifier
-                if (loadFilterableSpecificationAttributeOptionIds)
-                {
-                    var querySpecs = from p in query
-                                     join psa in _productSpecificationAttributeRepository.Table on p.Id equals psa.ProductId
-                                     where psa.AllowFiltering
-                                     select psa.SpecificationAttributeOptionId;
-                    //only distinct attributes
-                    filterableSpecificationAttributeOptionIds = querySpecs
-                        .Distinct()
-                        .ToList();
-                }
-
-                //return products
-                return products;
-
-                #endregion
-            }
-        }
-
-        /// <summary>
-        /// Gets products by product attribute
-        /// </summary>
-        /// <param name="productAttributeId">Product attribute identifier</param>
-        /// <param name="pageIndex">Page index</param>
-        /// <param name="pageSize">Page size</param>
-        /// <returns>Products</returns>
-        public virtual IPagedList<Product> GetProductsByProductAtributeId(int productAttributeId,
-            int pageIndex = 0, int pageSize = int.MaxValue)
-        {
-            var query = _productRepository.Table;
-            query = query.Where(x => x.ProductAttributeMappings.Any(y => y.ProductAttributeId == productAttributeId));
-            query = query.Where(x => !x.Deleted);
-            query = query.OrderBy(x => x.Name);
-
-            var products = new PagedList<Product>(query, pageIndex, pageSize);
-            return products;
-        }
-
-        /// <summary>
-        /// Gets associated products
-        /// </summary>
-        /// <param name="parentGroupedProductId">Parent product identifier (used with grouped products)</param>
-        /// <param name="storeId">Store identifier; 0 to load all records</param>
-        /// <param name="vendorId">Vendor identifier; 0 to load all records</param>
-        /// <param name="showHidden">A value indicating whether to show hidden records</param>
-        /// <returns>Products</returns>
-        public virtual IList<Product> GetAssociatedProducts(int parentGroupedProductId,
-            int storeId = 0, int vendorId = 0, bool showHidden = false)
-        {
-            var query = _productRepository.Table;
-            query = query.Where(x => x.ParentGroupedProductId == parentGroupedProductId);
-            if (!showHidden)
-            {
-                query = query.Where(x => x.Published);
-            }
-            if (!showHidden)
-            {
-                //The function 'CurrentUtcDateTime' is not supported by SQL Server Compact. 
-                //That's why we pass the date value
-                var nowUtc = DateTime.UtcNow;
-                //available dates
-                query = query.Where(p =>
-                    (!p.AvailableStartDateTimeUtc.HasValue || p.AvailableStartDateTimeUtc.Value < nowUtc) &&
-                    (!p.AvailableEndDateTimeUtc.HasValue || p.AvailableEndDateTimeUtc.Value > nowUtc));
-            }
-            //vendor filtering
-            if (vendorId > 0)
-            {
-                query = query.Where(p => p.VendorId == vendorId);
-            }
-            query = query.Where(x => !x.Deleted);
-            query = query.OrderBy(x => x.DisplayOrder);
-
-            var products = query.ToList();
-
-            //ACL mapping
-            if (!showHidden)
-            {
-                products = products.Where(x => _aclService.Authorize(x)).ToList();
-            }
-            //Store mapping
-            if (!showHidden && storeId > 0)
-            {
-                products = products.Where(x => _storeMappingService.Authorize(x, storeId)).ToList();
-            }
-
-            return products;
-        }
-        
-        /// <summary>
-        /// Update product review totals
-        /// </summary>
-        /// <param name="product">Product</param>
-        public virtual void UpdateProductReviewTotals(Product product)
-        {
-            if (product == null)
-                throw new ArgumentNullException("product");
-
-            int approvedRatingSum = 0;
-            int notApprovedRatingSum = 0; 
-            int approvedTotalReviews = 0;
-            int notApprovedTotalReviews = 0;
-            var reviews = product.ProductReviews;
-            foreach (var pr in reviews)
-            {
-                if (pr.IsApproved)
-                {
-                    approvedRatingSum += pr.Rating;
-                    approvedTotalReviews ++;
-                }
-                else
-                {
-                    notApprovedRatingSum += pr.Rating;
-                    notApprovedTotalReviews++;
-                }
-            }
-
-            product.ApprovedRatingSum = approvedRatingSum;
-            product.NotApprovedRatingSum = notApprovedRatingSum;
-            product.ApprovedTotalReviews = approvedTotalReviews;
-            product.NotApprovedTotalReviews = notApprovedTotalReviews;
-            UpdateProduct(product);
-        }
-
-        /// <summary>
-        /// Get low stock products
-        /// </summary>
-        /// <param name="vendorId">Vendor identifier; 0 to load all records</param>
-        /// <param name="products">Low stock products</param>
-        /// <param name="combinations">Low stock attribute combinations</param>
-        public virtual void GetLowStockProducts(int vendorId,
-            out IList<Product> products, 
-            out IList<ProductAttributeCombination> combinations)
-        {
-            //Track inventory for product
-            var query1 = from p in _productRepository.Table
-                         orderby p.MinStockQuantity
-                         where !p.Deleted &&
-                         p.ManageInventoryMethodId == (int)ManageInventoryMethod.ManageStock &&
-                         //ignore grouped products
-                         p.ProductTypeId != (int)ProductType.GroupedProduct &&
-                         p.MinStockQuantity >= (
-                            p.UseMultipleWarehouses ?
-                            p.ProductWarehouseInventory.Sum(pwi => pwi.StockQuantity - pwi.ReservedQuantity) : 
-                            p.StockQuantity) &&
-                         (vendorId == 0 || p.VendorId == vendorId)
-                         select p;
-            products = query1.ToList();
-
-            //Track inventory for product by product attributes
-            var query2 = from p in _productRepository.Table
-                         from c in p.ProductAttributeCombinations
-                         where !p.Deleted &&
-                         p.ManageInventoryMethodId == (int)ManageInventoryMethod.ManageStockByAttributes &&
-                         c.StockQuantity <= 0 &&
-                         (vendorId == 0 || p.VendorId == vendorId)
-                         select c;
-            combinations = query2.ToList();
-        }
-        
-        /// <summary>
-        /// Gets a product by SKU
-        /// </summary>
-        /// <param name="sku">SKU</param>
-        /// <returns>Product</returns>
-        public virtual Product GetProductBySku(string sku)
-        {
-            if (String.IsNullOrEmpty(sku))
-                return null;
-
-            sku = sku.Trim();
-
-            var query = from p in _productRepository.Table
-                        orderby p.Id
-                        where !p.Deleted &&
-                        p.Sku == sku
-                        select p;
-            var product = query.FirstOrDefault();
-            return product;
-        }
-        
-        /// <summary>
-        /// Update HasTierPrices property (used for performance optimization)
-        /// </summary>
-        /// <param name="product">Product</param>
-        public virtual void UpdateHasTierPricesProperty(Product product)
-        {
-            if (product == null)
-                throw new ArgumentNullException("product");
-
-            product.HasTierPrices = product.TierPrices.Count > 0;
-            UpdateProduct(product);
-        }
-
-        /// <summary>
-        /// Update HasDiscountsApplied property (used for performance optimization)
-        /// </summary>
-        /// <param name="product">Product</param>
-        public virtual void UpdateHasDiscountsApplied(Product product)
-        {
-            if (product == null)
-                throw new ArgumentNullException("product");
-
-            product.HasDiscountsApplied = product.AppliedDiscounts.Count > 0;
-            UpdateProduct(product);
-        }
-
-        #endregion
-
-        #region Inventory management methods
-
-        /// <summary>
-        /// Adjust inventory
-        /// </summary>
-        /// <param name="product">Product</param>
-        /// <param name="quantityToChange">Quantity to increase or descrease</param>
-        /// <param name="attributesXml">Attributes in XML format</param>
-        public virtual void AdjustInventory(Product product, int quantityToChange, string attributesXml = "")
-        {
-            if (product == null)
-                throw new ArgumentNullException("product");
-
-            if (quantityToChange == 0)
-                return;
-            
-            if (product.ManageInventoryMethod == ManageInventoryMethod.ManageStock)
-            {
-                //previous stock
-                var prevStockQuantity = product.GetTotalStockQuantity();
-
-                //update stock quantity
-                if (product.UseMultipleWarehouses)
-                {
-                    //use multiple warehouses
-                    if (quantityToChange < 0)
-                        ReserveInventory(product, quantityToChange);
-                    else
-                        UnblockReservedInventory(product, quantityToChange);
-                }
-                else
-                {
-                    //do not use multiple warehouses
-                    //simple inventory management
-                    product.StockQuantity += quantityToChange;
-                    UpdateProduct(product);
-                }
-
-                //qty is reduced. check if minimum stock quantity is reached
-                if (quantityToChange < 0 && product.MinStockQuantity >= product.GetTotalStockQuantity())
-                {
-                    //what should we do now? disable buy button, unpublish the product, or do nothing? check "Low stock activity" property
-                    switch (product.LowStockActivity)
-                    {
-                        case LowStockActivity.DisableBuyButton:
-                            product.DisableBuyButton = true;
-                            product.DisableWishlistButton = true;
-                            UpdateProduct(product);
-                            break;
-                        case LowStockActivity.Unpublish:
-                            product.Published = false;
-                            UpdateProduct(product);
-                            break;
-                        default:
-                            break;
-                    }
-                }
-                //qty is increased. product is back in stock (minimum stock quantity is reached again)?
-                if (_catalogSettings.PublishBackProductWhenCancellingOrders)
-                {
-                    if (quantityToChange > 0 && prevStockQuantity <= product.MinStockQuantity && product.MinStockQuantity < product.GetTotalStockQuantity())
-                    {
-                        switch (product.LowStockActivity)
+                    if (selectedIds.Count() != allIds.Count)
+                        if (_catalogSettings.AttributeValueOutOfStockDisplayType == AttributeValueOutOfStockDisplayType.AlwaysDisplay)
+                            return await _localizationService.GetResourceAsync("Products.Availability.SelectRequiredAttributes");
+                        else
                         {
-                            case LowStockActivity.DisableBuyButton:
-                                product.DisableBuyButton = false;
-                                product.DisableWishlistButton = false;
-                                UpdateProduct(product);
-                                break;
-                            case LowStockActivity.Unpublish:
-                                product.Published = true;
-                                UpdateProduct(product);
-                                break;
-                            default:
-                                break;
+                            var combinations = await _productAttributeService.GetAllProductAttributeCombinationsAsync(product.Id);
+
+                            combinations = combinations.Where(p => p.StockQuantity >= 0 || p.AllowOutOfStockOrders).ToList();
+
+                            var attributes = await combinations.SelectAwait(async c => await _productAttributeParser.ParseProductAttributeMappingsAsync(c.AttributesXml)).ToListAsync();
+
+                            var flag = attributes.SelectMany(a => a).Any(a => selectedIds.Contains(a.Id));
+
+                            if (flag)
+                                return await _localizationService.GetResourceAsync("Products.Availability.SelectRequiredAttributes");
                         }
-                    }
-                }
 
-                //send email notification
-                if (quantityToChange < 0 && product.GetTotalStockQuantity() < product.NotifyAdminForQuantityBelow)
+                    var productAvailabilityRange = await
+                        _dateRangeService.GetProductAvailabilityRangeByIdAsync(product.ProductAvailabilityRangeId);
+                    stockMessage = productAvailabilityRange == null
+                        ? await _localizationService.GetResourceAsync("Products.Availability.OutOfStock")
+                        : string.Format(await _localizationService.GetResourceAsync("Products.Availability.AvailabilityRange"),
+                            await _localizationService.GetLocalizedAsync(productAvailabilityRange, range => range.Name));
+                }
+                else
                 {
-                    _workflowMessageService.SendQuantityBelowStoreOwnerNotification(product, _localizationSettings.DefaultAdminLanguageId);
+                    stockMessage = await _localizationService.GetResourceAsync("Products.Availability.InStock");
                 }
             }
 
-            if (product.ManageInventoryMethod == ManageInventoryMethod.ManageStockByAttributes)
+            return stockMessage;
+        }
+
+        /// <summary>
+        /// Get stock message
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the message
+        /// </returns>
+        protected virtual async Task<string> GetStockMessageAsync(Product product)
+        {
+            if (!product.DisplayStockAvailability)
+                return string.Empty;
+
+            var stockMessage = string.Empty;
+            var stockQuantity = await GetTotalStockQuantityAsync(product);
+
+            if (stockQuantity > 0)
             {
-                var combination = _productAttributeParser.FindProductAttributeCombination(product, attributesXml);
-                if (combination != null)
+                if (product.MinStockQuantity >= stockQuantity && product.LowStockActivity == LowStockActivity.Nothing)
                 {
-                    combination.StockQuantity += quantityToChange;
-                    _productAttributeService.UpdateProductAttributeCombination(combination);
-
-                    //send email notification
-                    if (quantityToChange < 0 && combination.StockQuantity < combination.NotifyAdminForQuantityBelow)
-                    {
-                        _workflowMessageService.SendQuantityBelowStoreOwnerNotification(combination, _localizationSettings.DefaultAdminLanguageId);
-                    }
+                    stockMessage = product.DisplayStockQuantity
+                        ?
+                        //display "low stock" with stock quantity
+                        string.Format(await _localizationService.GetResourceAsync("Products.Availability.LowStockWithQuantity"), stockQuantity)
+                        :
+                        //display "low stock" without stock quantity
+                        await _localizationService.GetResourceAsync("Products.Availability.LowStock");
+                }
+                else
+                {
+                    stockMessage = product.DisplayStockQuantity
+                        ?
+                        //display "in stock" with stock quantity
+                        string.Format(await _localizationService.GetResourceAsync("Products.Availability.InStockWithQuantity"), stockQuantity)
+                        :
+                        //display "in stock" without stock quantity
+                        await _localizationService.GetResourceAsync("Products.Availability.InStock");
                 }
             }
-
-
-            //bundled products
-            var attributeValues = _productAttributeParser.ParseProductAttributeValues(attributesXml);
-            foreach (var attributeValue in attributeValues)
+            else
             {
-                if (attributeValue.AttributeValueType == AttributeValueType.AssociatedToProduct)
+                //out of stock
+                var productAvailabilityRange = await _dateRangeService.GetProductAvailabilityRangeByIdAsync(product.ProductAvailabilityRangeId);
+                switch (product.BackorderMode)
                 {
-                    //associated product (bundle)
-                    var associatedProduct = GetProductById(attributeValue.AssociatedProductId);
-                    if (associatedProduct != null)
-                    {
-                        AdjustInventory(associatedProduct, quantityToChange * attributeValue.Quantity);
-                    }
+                    case BackorderMode.NoBackorders:
+                        stockMessage = productAvailabilityRange == null
+                            ? await _localizationService.GetResourceAsync("Products.Availability.OutOfStock")
+                            : string.Format(await _localizationService.GetResourceAsync("Products.Availability.AvailabilityRange"),
+                                await _localizationService.GetLocalizedAsync(productAvailabilityRange, range => range.Name));
+                        break;
+                    case BackorderMode.AllowQtyBelow0:
+                        stockMessage = await _localizationService.GetResourceAsync("Products.Availability.InStock");
+                        break;
+                    case BackorderMode.AllowQtyBelow0AndNotifyCustomer:
+                        stockMessage = productAvailabilityRange == null
+                            ? await _localizationService.GetResourceAsync("Products.Availability.Backordering")
+                            : string.Format(await _localizationService.GetResourceAsync("Products.Availability.BackorderingWithDate"),
+                                await _localizationService.GetLocalizedAsync(productAvailabilityRange, range => range.Name));
+                        break;
                 }
             }
 
-            //TODO send back in stock notifications?
-            //also do not forget to uncomment some code above ("prevStockQuantity")
-            //if (product.ManageInventoryMethod == ManageInventoryMethod.ManageStock &&
-            //    product.BackorderMode == BackorderMode.NoBackorders &&
-            //    product.AllowBackInStockSubscriptions &&
-            //    product.GetTotalStockQuantity() > 0 &&
-            //    prevStockQuantity <= 0 &&
-            //    product.Published &&
-            //    !product.Deleted)
-            //{
-            //    //_backInStockSubscriptionService.SendNotificationsToSubscribers(product);
-            //}
+            return stockMessage;
         }
 
         /// <summary>
@@ -1304,38 +400,34 @@ namespace Nop.Services.Catalog
         /// </summary>
         /// <param name="product">Product</param>
         /// <param name="quantity">Quantity, must be negative</param>
-        public virtual void ReserveInventory(Product product, int quantity)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        protected virtual async Task ReserveInventoryAsync(Product product, int quantity)
         {
             if (product == null)
-                throw new ArgumentNullException("product");
+                throw new ArgumentNullException(nameof(product));
 
             if (quantity >= 0)
-                throw new ArgumentException("Value must be negative.", "quantity");
+                throw new ArgumentException("Value must be negative.", nameof(quantity));
 
             var qty = -quantity;
 
-            var productInventory = product.ProductWarehouseInventory
+            var productInventory = _productWarehouseInventoryRepository.Table.Where(pwi => pwi.ProductId == product.Id)
                 .OrderByDescending(pwi => pwi.StockQuantity - pwi.ReservedQuantity)
                 .ToList();
 
             if (productInventory.Count <= 0)
                 return;
 
-            Action pass = () =>
-            {
-                foreach (var item in productInventory)
-                {
-                    var selectQty = Math.Min(item.StockQuantity - item.ReservedQuantity, qty);
-                    item.ReservedQuantity += selectQty;
-                    qty -= selectQty;
-
-                    if (qty <= 0)
-                        break;
-                }
-            };
-
             // 1st pass: Applying reserved
-            pass();
+            foreach (var item in productInventory)
+            {
+                var selectQty = Math.Min(Math.Max(0, item.StockQuantity - item.ReservedQuantity), qty);
+                item.ReservedQuantity += selectQty;
+                qty -= selectQty;
+
+                if (qty <= 0)
+                    break;
+            }
 
             if (qty > 0)
             {
@@ -1344,7 +436,7 @@ namespace Nop.Services.Catalog
                 pwi.ReservedQuantity += qty;
             }
 
-            this.UpdateProduct(product);
+            await UpdateProductWarehouseInventoryAsync(productInventory);
         }
 
         /// <summary>
@@ -1352,20 +444,21 @@ namespace Nop.Services.Catalog
         /// </summary>
         /// <param name="product">Product</param>
         /// <param name="quantity">Quantity, must be positive</param>
-        public virtual void UnblockReservedInventory(Product product, int quantity)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        protected virtual async Task UnblockReservedInventoryAsync(Product product, int quantity)
         {
             if (product == null)
-                throw new ArgumentNullException("product");
+                throw new ArgumentNullException(nameof(product));
 
             if (quantity < 0)
-                throw new ArgumentException("Value must be positive.", "quantity");
+                throw new ArgumentException("Value must be positive.", nameof(quantity));
 
-            var productInventory = product.ProductWarehouseInventory
+            var productInventory = await _productWarehouseInventoryRepository.Table.Where(pwi => pwi.ProductId == product.Id)
                 .OrderByDescending(pwi => pwi.ReservedQuantity)
                 .ThenByDescending(pwi => pwi.StockQuantity)
-                .ToList();
+                .ToListAsync();
 
-            if (productInventory.Count <= 0)
+            if (!productInventory.Any())
                 return;
 
             var qty = quantity;
@@ -1386,7 +479,1380 @@ namespace Nop.Services.Catalog
                 pwi.StockQuantity += qty;
             }
 
-            UpdateProduct(product);
+            await UpdateProductWarehouseInventoryAsync(productInventory);
+        }
+
+        /// <summary>
+        /// Gets cross-sell products by product identifier
+        /// </summary>
+        /// <param name="productIds">The first product identifiers</param>
+        /// <param name="showHidden">A value indicating whether to show hidden records</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the cross-sell products
+        /// </returns>
+        protected virtual async Task<IList<CrossSellProduct>> GetCrossSellProductsByProductIdsAsync(int[] productIds, bool showHidden = false)
+        {
+            if (productIds == null || productIds.Length == 0)
+                return new List<CrossSellProduct>();
+
+            var query = from csp in _crossSellProductRepository.Table
+                        join p in _productRepository.Table on csp.ProductId2 equals p.Id
+                        where productIds.Contains(csp.ProductId1) &&
+                              !p.Deleted &&
+                              (showHidden || p.Published)
+                        orderby csp.Id
+                        select csp;
+            var crossSellProducts = await query.ToListAsync();
+
+            return crossSellProducts;
+        }
+
+        /// <summary>
+        /// Gets ratio of useful and not useful product reviews 
+        /// </summary>
+        /// <param name="productReview">Product review</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the result
+        /// </returns>
+        protected virtual async Task<(int usefulCount, int notUsefulCount)> GetHelpfulnessCountsAsync(ProductReview productReview)
+        {
+            if (productReview is null)
+                throw new ArgumentNullException(nameof(productReview));
+
+            var productReviewHelpfulness = _productReviewHelpfulnessRepository.Table.Where(prh => prh.ProductReviewId == productReview.Id);
+
+            return (await productReviewHelpfulness.CountAsync(prh => prh.WasHelpful),
+                await productReviewHelpfulness.CountAsync(prh => !prh.WasHelpful));
+        }
+
+        /// <summary>
+        /// Inserts a product review helpfulness record
+        /// </summary>
+        /// <param name="productReviewHelpfulness">Product review helpfulness record</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        protected virtual async Task InsertProductReviewHelpfulnessAsync(ProductReviewHelpfulness productReviewHelpfulness)
+        {
+            await _productReviewHelpfulnessRepository.InsertAsync(productReviewHelpfulness);
+        }
+
+        #endregion
+
+        #region Methods
+
+        #region Products
+
+        /// <summary>
+        /// Delete a product
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteProductAsync(Product product)
+        {
+            await _productRepository.DeleteAsync(product);
+        }
+
+        /// <summary>
+        /// Delete products
+        /// </summary>
+        /// <param name="products">Products</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteProductsAsync(IList<Product> products)
+        {
+            await _productRepository.DeleteAsync(products);
+        }
+
+        /// <summary>
+        /// Gets all products displayed on the home page
+        /// </summary>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the products
+        /// </returns>
+        public virtual async Task<IList<Product>> GetAllProductsDisplayedOnHomepageAsync()
+        {
+            var products = await _productRepository.GetAllAsync(query =>
+            {
+                return from p in query
+                       orderby p.DisplayOrder, p.Id
+                       where p.Published &&
+                             !p.Deleted &&
+                             p.ShowOnHomepage
+                       select p;
+            }, cache => cache.PrepareKeyForDefaultCache(NopCatalogDefaults.ProductsHomepageCacheKey));
+
+            return products;
+        }
+
+        /// <summary>
+        /// Gets product
+        /// </summary>
+        /// <param name="productId">Product identifier</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the product
+        /// </returns>
+        public virtual async Task<Product> GetProductByIdAsync(int productId)
+        {
+            return await _productRepository.GetByIdAsync(productId, cache => default);
+        }
+
+        /// <summary>
+        /// Get products by identifiers
+        /// </summary>
+        /// <param name="productIds">Product identifiers</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the products
+        /// </returns>
+        public virtual async Task<IList<Product>> GetProductsByIdsAsync(int[] productIds)
+        {
+            return await _productRepository.GetByIdsAsync(productIds, cache => default, false);
+        }
+
+        /// <summary>
+        /// Inserts a product
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task InsertProductAsync(Product product)
+        {
+            await _productRepository.InsertAsync(product);
+        }
+
+        /// <summary>
+        /// Updates the product
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateProductAsync(Product product)
+        {
+            await _productRepository.UpdateAsync(product);
+        }
+
+        /// <summary>
+        /// Gets featured products by a category identifier
+        /// </summary>
+        /// <param name="categoryId">Category identifier</param>
+        /// <param name="storeId">Store identifier; 0 if you want to get all records</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the list of featured products
+        /// </returns>
+        public virtual async Task<IList<Product>> GetCategoryFeaturedProductsAsync(int categoryId, int storeId = 0)
+        {
+            IList<Product> featuredProducts = new List<Product>();
+
+            if (categoryId == 0)
+                return featuredProducts;
+
+            var customer = await _workContext.GetCurrentCustomerAsync();
+            var customerRoleIds = await _customerService.GetCustomerRoleIdsAsync(customer);
+            var cacheKey = _staticCacheManager.PrepareKeyForDefaultCache(NopCatalogDefaults.CategoryFeaturedProductsIdsKey, categoryId, customerRoleIds, storeId);
+
+            var featuredProductIds = await _staticCacheManager.GetAsync(cacheKey, async () =>
+            {
+                var query = from p in _productRepository.Table
+                            join pc in _productCategoryRepository.Table on p.Id equals pc.ProductId
+                            where p.Published && !p.Deleted && p.VisibleIndividually &&
+                                (!p.AvailableStartDateTimeUtc.HasValue || p.AvailableStartDateTimeUtc.Value < DateTime.UtcNow) &&
+                                (!p.AvailableEndDateTimeUtc.HasValue || p.AvailableEndDateTimeUtc.Value > DateTime.UtcNow) &&
+                                pc.IsFeaturedProduct && categoryId == pc.CategoryId
+                            select p;
+
+                //apply store mapping constraints
+                query = await _storeMappingService.ApplyStoreMapping(query, storeId);
+
+                //apply ACL constraints
+                query = await _aclService.ApplyAcl(query, customerRoleIds);
+
+                featuredProducts = query.ToList();
+
+                return featuredProducts.Select(p => p.Id).ToList();
+            });
+
+            if (featuredProducts.Count == 0 && featuredProductIds.Count > 0)
+                featuredProducts = await _productRepository.GetByIdsAsync(featuredProductIds, cache => default, false);
+
+            return featuredProducts;
+        }
+
+        /// <summary>
+        /// Gets featured products by manufacturer identifier
+        /// </summary>
+        /// <param name="manufacturerId">Manufacturer identifier</param>
+        /// <param name="storeId">Store identifier; 0 if you want to get all records</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the list of featured products
+        /// </returns>
+        public virtual async Task<IList<Product>> GetManufacturerFeaturedProductsAsync(int manufacturerId, int storeId = 0)
+        {
+            IList<Product> featuredProducts = new List<Product>();
+
+            if (manufacturerId == 0)
+                return featuredProducts;
+
+            var customer = await _workContext.GetCurrentCustomerAsync();
+            var customerRoleIds = await _customerService.GetCustomerRoleIdsAsync(customer);
+            var cacheKey = _staticCacheManager.PrepareKeyForDefaultCache(NopCatalogDefaults.ManufacturerFeaturedProductIdsKey, manufacturerId, customerRoleIds, storeId);
+
+            var featuredProductIds = await _staticCacheManager.GetAsync(cacheKey, async () =>
+            {
+                var query = from p in _productRepository.Table
+                            join pm in _productManufacturerRepository.Table on p.Id equals pm.ProductId
+                            where p.Published && !p.Deleted && p.VisibleIndividually &&
+                                (!p.AvailableStartDateTimeUtc.HasValue || p.AvailableStartDateTimeUtc.Value < DateTime.UtcNow) &&
+                                (!p.AvailableEndDateTimeUtc.HasValue || p.AvailableEndDateTimeUtc.Value > DateTime.UtcNow) &&
+                                pm.IsFeaturedProduct && manufacturerId == pm.ManufacturerId
+                            select p;
+
+                //apply store mapping constraints
+                query = await _storeMappingService.ApplyStoreMapping(query, storeId);
+
+                //apply ACL constraints
+                query = await _aclService.ApplyAcl(query, customerRoleIds);
+
+                featuredProducts = query.ToList();
+
+                return featuredProducts.Select(p => p.Id).ToList();
+            });
+
+            if (featuredProducts.Count == 0 && featuredProductIds.Count > 0)
+                featuredProducts = await _productRepository.GetByIdsAsync(featuredProductIds, cache => default, false);
+
+            return featuredProducts;
+        }
+
+        /// <summary>
+        /// Gets products which marked as new
+        /// </summary>
+        /// <param name="storeId">Store identifier; 0 if you want to get all records</param>
+        /// <param name="pageIndex">Page index</param>
+        /// <param name="pageSize">Page size</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the list of new products
+        /// </returns>
+        public virtual async Task<IPagedList<Product>> GetProductsMarkedAsNewAsync(int storeId = 0, int pageIndex = 0, int pageSize = int.MaxValue)
+        {
+            var query = from p in _productRepository.Table
+                        where p.Published && p.VisibleIndividually && p.MarkAsNew && !p.Deleted &&
+                            DateTime.UtcNow >= (p.MarkAsNewStartDateTimeUtc ?? DateTime.MinValue) &&
+                            DateTime.UtcNow <= (p.MarkAsNewEndDateTimeUtc ?? DateTime.MaxValue)
+                        select p;
+
+            //apply store mapping constraints
+            query = await _storeMappingService.ApplyStoreMapping(query, storeId);
+
+            //apply ACL constraints
+            var customer = await _workContext.GetCurrentCustomerAsync();
+            query = await _aclService.ApplyAcl(query, customer);
+
+            query = query.OrderByDescending(p => p.CreatedOnUtc);
+
+            return await query.ToPagedListAsync(pageIndex, pageSize);
+        }
+
+        /// <summary>
+        /// Get number of product (published and visible) in certain category
+        /// </summary>
+        /// <param name="categoryIds">Category identifiers</param>
+        /// <param name="storeId">Store identifier; 0 to load all records</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the number of products
+        /// </returns>
+        public virtual async Task<int> GetNumberOfProductsInCategoryAsync(IList<int> categoryIds = null, int storeId = 0)
+        {
+            //validate "categoryIds" parameter
+            if (categoryIds != null && categoryIds.Contains(0))
+                categoryIds.Remove(0);
+
+            var query = _productRepository.Table.Where(p => p.Published && !p.Deleted && p.VisibleIndividually);
+
+            //apply store mapping constraints
+            query = await _storeMappingService.ApplyStoreMapping(query, storeId);
+
+            //apply ACL constraints
+            var customer = await _workContext.GetCurrentCustomerAsync();
+            var customerRoleIds = await _customerService.GetCustomerRoleIdsAsync(customer);
+            query = await _aclService.ApplyAcl(query, customerRoleIds);
+
+            //category filtering
+            if (categoryIds != null && categoryIds.Any())
+            {
+                query = from p in query
+                        join pc in _productCategoryRepository.Table on p.Id equals pc.ProductId
+                        where categoryIds.Contains(pc.CategoryId)
+                        select p;
+            }
+
+            var cacheKey = _staticCacheManager
+                .PrepareKeyForDefaultCache(NopCatalogDefaults.CategoryProductsNumberCacheKey, customerRoleIds, storeId, categoryIds);
+
+            //only distinct products
+            return await _staticCacheManager.GetAsync(cacheKey, () => query.Select(p => p.Id).Count());
+        }
+
+        /// <summary>
+        /// Search products
+        /// </summary>
+        /// <param name="pageIndex">Page index</param>
+        /// <param name="pageSize">Page size</param>
+        /// <param name="categoryIds">Category identifiers</param>
+        /// <param name="manufacturerIds">Manufacturer identifiers</param>
+        /// <param name="storeId">Store identifier; 0 to load all records</param>
+        /// <param name="vendorId">Vendor identifier; 0 to load all records</param>
+        /// <param name="warehouseId">Warehouse identifier; 0 to load all records</param>
+        /// <param name="productType">Product type; 0 to load all records</param>
+        /// <param name="visibleIndividuallyOnly">A values indicating whether to load only products marked as "visible individually"; "false" to load all records; "true" to load "visible individually" only</param>
+        /// <param name="excludeFeaturedProducts">A value indicating whether loaded products are marked as featured (relates only to categories and manufacturers); "false" (by default) to load all records; "true" to exclude featured products from results</param>
+        /// <param name="priceMin">Minimum price; null to load all records</param>
+        /// <param name="priceMax">Maximum price; null to load all records</param>
+        /// <param name="productTagId">Product tag identifier; 0 to load all records</param>
+        /// <param name="keywords">Keywords</param>
+        /// <param name="searchDescriptions">A value indicating whether to search by a specified "keyword" in product descriptions</param>
+        /// <param name="searchManufacturerPartNumber">A value indicating whether to search by a specified "keyword" in manufacturer part number</param>
+        /// <param name="searchSku">A value indicating whether to search by a specified "keyword" in product SKU</param>
+        /// <param name="searchProductTags">A value indicating whether to search by a specified "keyword" in product tags</param>
+        /// <param name="languageId">Language identifier (search for text searching)</param>
+        /// <param name="filteredSpecOptions">Specification options list to filter products; null to load all records</param>
+        /// <param name="orderBy">Order by</param>
+        /// <param name="showHidden">A value indicating whether to show hidden records</param>
+        /// <param name="overridePublished">
+        /// null - process "Published" property according to "showHidden" parameter
+        /// true - load only "Published" products
+        /// false - load only "Unpublished" products
+        /// </param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the products
+        /// </returns>
+        public virtual async Task<IPagedList<Product>> SearchProductsAsync(
+            int pageIndex = 0,
+            int pageSize = int.MaxValue,
+            IList<int> categoryIds = null,
+            IList<int> manufacturerIds = null,
+            int storeId = 0,
+            int vendorId = 0,
+            int warehouseId = 0,
+            ProductType? productType = null,
+            bool visibleIndividuallyOnly = false,
+            bool excludeFeaturedProducts = false,
+            decimal? priceMin = null,
+            decimal? priceMax = null,
+            int productTagId = 0,
+            string keywords = null,
+            bool searchDescriptions = false,
+            bool searchManufacturerPartNumber = true,
+            bool searchSku = true,
+            bool searchProductTags = false,
+            int languageId = 0,
+            IList<SpecificationAttributeOption> filteredSpecOptions = null,
+            ProductSortingEnum orderBy = ProductSortingEnum.Position,
+            bool showHidden = false,
+            bool? overridePublished = null)
+        {
+            //some databases don't support int.MaxValue
+            if (pageSize == int.MaxValue)
+                pageSize = int.MaxValue - 1;
+
+            var productsQuery = _productRepository.Table;
+
+            if (!showHidden)
+                productsQuery = productsQuery.Where(p => p.Published);
+            else if (overridePublished.HasValue)
+                productsQuery = productsQuery.Where(p => p.Published == overridePublished.Value);
+
+            if (!showHidden)
+            {
+                //apply store mapping constraints
+                productsQuery = await _storeMappingService.ApplyStoreMapping(productsQuery, storeId);
+
+                //apply ACL constraints
+                var customer = await _workContext.GetCurrentCustomerAsync();
+                productsQuery = await _aclService.ApplyAcl(productsQuery, customer);
+            }
+
+            productsQuery =
+                from p in productsQuery
+                where !p.Deleted &&
+                    (!visibleIndividuallyOnly || p.VisibleIndividually) &&
+                    (vendorId == 0 || p.VendorId == vendorId) &&
+                    (
+                        warehouseId == 0 ||
+                        (
+                            !p.UseMultipleWarehouses ? p.WarehouseId == warehouseId :
+                                _productWarehouseInventoryRepository.Table.Any(pwi => pwi.WarehouseId == warehouseId && pwi.ProductId == p.Id)
+                        )
+                    ) &&
+                    (productType == null || p.ProductTypeId == (int)productType) &&
+                    (showHidden ||
+                            DateTime.UtcNow >= (p.AvailableStartDateTimeUtc ?? DateTime.MinValue) &&
+                            DateTime.UtcNow <= (p.AvailableEndDateTimeUtc ?? DateTime.MaxValue)
+                    ) &&
+                    (priceMin == null || p.Price >= priceMin) &&
+                    (priceMax == null || p.Price <= priceMax)
+                select p;
+
+            if (!string.IsNullOrEmpty(keywords))
+            {
+                var langs = await _languageService.GetAllLanguagesAsync(showHidden: true);
+
+                //Set a flag which will to points need to search in localized properties. If showHidden doesn't set to true should be at least two published languages.
+                var searchLocalizedValue = languageId > 0 && langs.Count >= 2 && (showHidden || langs.Count(l => l.Published) >= 2);
+
+                IQueryable<int> productsByKeywords;
+
+                productsByKeywords =
+                        from p in _productRepository.Table
+                        where p.Name.Contains(keywords) ||
+                            (searchDescriptions &&
+                                (p.ShortDescription.Contains(keywords) || p.FullDescription.Contains(keywords))) ||
+                            (searchManufacturerPartNumber && p.ManufacturerPartNumber == keywords) ||
+                            (searchSku && p.Sku == keywords)
+                        select p.Id;
+
+                if (searchLocalizedValue)
+                {
+                    productsByKeywords = productsByKeywords.Union(
+                        from lp in _localizedPropertyRepository.Table
+                        let checkName = lp.LocaleKey == nameof(Product.Name) &&
+                                        lp.LocaleValue.Contains(keywords)
+                        let checkShortDesc = searchDescriptions &&
+                                        lp.LocaleKey == nameof(Product.ShortDescription) &&
+                                        lp.LocaleValue.Contains(keywords)
+                        where
+                            lp.LocaleKeyGroup == nameof(Product) && lp.LanguageId == languageId && (checkName || checkShortDesc)
+
+                        select lp.EntityId);
+                }
+
+                //search by SKU for ProductAttributeCombination
+                if (searchSku)
+                {
+                    productsByKeywords = productsByKeywords.Union(
+                        from pac in _productAttributeCombinationRepository.Table
+                        where pac.Sku == keywords
+                        select pac.ProductId);
+                }
+
+                //search by category name if admin allows
+                if (_catalogSettings.AllowCustomersToSearchWithCategoryName)
+                {
+                    productsByKeywords = productsByKeywords.Union(
+                        from pc in _productCategoryRepository.Table
+                        join c in _categoryRepository.Table on pc.CategoryId equals c.Id
+                        where c.Name.Contains(keywords)
+                        select pc.ProductId
+                    );
+
+                    if (searchLocalizedValue)
+                    {
+                        productsByKeywords = productsByKeywords.Union(
+                        from pc in _productCategoryRepository.Table
+                        join lp in _localizedPropertyRepository.Table on pc.CategoryId equals lp.EntityId
+                        where lp.LocaleKeyGroup == nameof(Category) &&
+                              lp.LocaleKey == nameof(Category.Name) &&
+                              lp.LocaleValue.Contains(keywords) &&
+                              lp.LanguageId == languageId
+                        select pc.ProductId);
+                    }
+                }
+
+                //search by manufacturer name if admin allows
+                if (_catalogSettings.AllowCustomersToSearchWithManufacturerName)
+                {
+                    productsByKeywords = productsByKeywords.Union(
+                        from pm in _productManufacturerRepository.Table
+                        join m in _manufacturerRepository.Table on pm.ManufacturerId equals m.Id
+                        where m.Name.Contains(keywords)
+                        select pm.ProductId
+                    );
+
+                    if (searchLocalizedValue)
+                    {
+                        productsByKeywords = productsByKeywords.Union(
+                        from pm in _productManufacturerRepository.Table
+                        join lp in _localizedPropertyRepository.Table on pm.ManufacturerId equals lp.EntityId
+                        where lp.LocaleKeyGroup == nameof(Manufacturer) &&
+                              lp.LocaleKey == nameof(Manufacturer.Name) &&
+                              lp.LocaleValue.Contains(keywords) &&
+                              lp.LanguageId == languageId
+                        select pm.ProductId);
+                    }
+                }
+
+                if (searchProductTags)
+                {
+                    productsByKeywords = productsByKeywords.Union(
+                        from pptm in _productTagMappingRepository.Table
+                        join pt in _productTagRepository.Table on pptm.ProductTagId equals pt.Id
+                        where pt.Name.Contains(keywords)
+                        select pptm.ProductId
+                    );
+
+                    if (searchLocalizedValue)
+                    {
+                        productsByKeywords = productsByKeywords.Union(
+                        from pptm in _productTagMappingRepository.Table
+                        join lp in _localizedPropertyRepository.Table on pptm.ProductTagId equals lp.EntityId
+                        where lp.LocaleKeyGroup == nameof(ProductTag) &&
+                              lp.LocaleKey == nameof(ProductTag.Name) &&
+                              lp.LocaleValue.Contains(keywords) &&
+                              lp.LanguageId == languageId
+                        select pptm.ProductId);
+                    }
+                }
+
+                productsQuery =
+                    from p in productsQuery
+                    join pbk in productsByKeywords on p.Id equals pbk
+                    select p;
+            }
+
+            if (categoryIds is not null)
+            {
+                if (categoryIds.Contains(0))
+                    categoryIds.Remove(0);
+
+                if (categoryIds.Any())
+                {
+                    var productCategoryQuery =
+                        from pc in _productCategoryRepository.Table
+                        where (!excludeFeaturedProducts || !pc.IsFeaturedProduct) &&
+                            categoryIds.Contains(pc.CategoryId)
+                        group pc by pc.ProductId into pc
+                        select new
+                        {
+                            ProductId = pc.Key,
+                            DisplayOrder = pc.First().DisplayOrder
+                        };
+
+                    productsQuery =
+                        from p in productsQuery
+                        join pc in productCategoryQuery on p.Id equals pc.ProductId
+                        orderby pc.DisplayOrder, p.Name
+                        select p;
+                }
+            }
+
+            if (manufacturerIds is not null)
+            {
+                if (manufacturerIds.Contains(0))
+                    manufacturerIds.Remove(0);
+
+                if (manufacturerIds.Any())
+                {
+                    var productManufacturerQuery =
+                        from pm in _productManufacturerRepository.Table
+                        where (!excludeFeaturedProducts || !pm.IsFeaturedProduct) &&
+                            manufacturerIds.Contains(pm.ManufacturerId)
+                        group pm by pm.ProductId into pm
+                        select new
+                        {
+                            ProductId = pm.Key,
+                            DisplayOrder = pm.First().DisplayOrder
+                        };
+
+                    productsQuery =
+                        from p in productsQuery
+                        join pm in productManufacturerQuery on p.Id equals pm.ProductId
+                        orderby pm.DisplayOrder, p.Name
+                        select p;
+                }
+            }
+
+            if (productTagId > 0)
+            {
+                productsQuery =
+                    from p in productsQuery
+                    join ptm in _productTagMappingRepository.Table on p.Id equals ptm.ProductId
+                    where ptm.ProductTagId == productTagId
+                    select p;
+            }
+
+            if (filteredSpecOptions?.Count > 0)
+            {
+                var specificationAttributeIds = filteredSpecOptions
+                    .Select(sao => sao.SpecificationAttributeId)
+                    .Distinct();
+
+                foreach (var specificationAttributeId in specificationAttributeIds)
+                {
+                    var optionIdsBySpecificationAttribute = filteredSpecOptions
+                        .Where(o => o.SpecificationAttributeId == specificationAttributeId)
+                        .Select(o => o.Id);
+
+                    var productSpecificationQuery =
+                        from psa in _productSpecificationAttributeRepository.Table
+                        where psa.AllowFiltering && optionIdsBySpecificationAttribute.Contains(psa.SpecificationAttributeOptionId)
+                        select psa;
+
+                    productsQuery =
+                        from p in productsQuery
+                        where productSpecificationQuery.Any(pc => pc.ProductId == p.Id)
+                        select p;
+                }
+            }
+
+            return await productsQuery.OrderBy(_localizedPropertyRepository, await _workContext.GetWorkingLanguageAsync(), orderBy).ToPagedListAsync(pageIndex, pageSize);
+        }
+
+        /// <summary>
+        /// Gets products by product attribute
+        /// </summary>
+        /// <param name="productAttributeId">Product attribute identifier</param>
+        /// <param name="pageIndex">Page index</param>
+        /// <param name="pageSize">Page size</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the products
+        /// </returns>
+        public virtual async Task<IPagedList<Product>> GetProductsByProductAttributeIdAsync(int productAttributeId,
+            int pageIndex = 0, int pageSize = int.MaxValue)
+        {
+            var query = from p in _productRepository.Table
+                        join pam in _productAttributeMappingRepository.Table on p.Id equals pam.ProductId
+                        where
+                            pam.ProductAttributeId == productAttributeId &&
+                            !p.Deleted
+                        orderby p.Name
+                        select p;
+
+            return await query.ToPagedListAsync(pageIndex, pageSize);
+        }
+
+        /// <summary>
+        /// Gets associated products
+        /// </summary>
+        /// <param name="parentGroupedProductId">Parent product identifier (used with grouped products)</param>
+        /// <param name="storeId">Store identifier; 0 to load all records</param>
+        /// <param name="vendorId">Vendor identifier; 0 to load all records</param>
+        /// <param name="showHidden">A value indicating whether to show hidden records</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the products
+        /// </returns>
+        public virtual async Task<IList<Product>> GetAssociatedProductsAsync(int parentGroupedProductId,
+            int storeId = 0, int vendorId = 0, bool showHidden = false)
+        {
+            var query = _productRepository.Table;
+            query = query.Where(x => x.ParentGroupedProductId == parentGroupedProductId);
+            if (!showHidden)
+            {
+                query = query.Where(x => x.Published);
+
+                //available dates
+                query = query.Where(p =>
+                    (!p.AvailableStartDateTimeUtc.HasValue || p.AvailableStartDateTimeUtc.Value < DateTime.UtcNow) &&
+                    (!p.AvailableEndDateTimeUtc.HasValue || p.AvailableEndDateTimeUtc.Value > DateTime.UtcNow));
+            }
+            //vendor filtering
+            if (vendorId > 0)
+            {
+                query = query.Where(p => p.VendorId == vendorId);
+            }
+
+            query = query.Where(x => !x.Deleted);
+            query = query.OrderBy(x => x.DisplayOrder).ThenBy(x => x.Id);
+
+            var products = await query.ToListAsync();
+
+            //ACL mapping
+            if (!showHidden)
+                products = await products.WhereAwait(async x => await _aclService.AuthorizeAsync(x)).ToListAsync();
+
+            //Store mapping
+            if (!showHidden && storeId > 0)
+                products = await products.WhereAwait(async x => await _storeMappingService.AuthorizeAsync(x, storeId)).ToListAsync();
+
+            return products;
+        }
+
+        /// <summary>
+        /// Update product review totals
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateProductReviewTotalsAsync(Product product)
+        {
+            if (product == null)
+                throw new ArgumentNullException(nameof(product));
+
+            var approvedRatingSum = 0;
+            var notApprovedRatingSum = 0;
+            var approvedTotalReviews = 0;
+            var notApprovedTotalReviews = 0;
+
+            var reviews = await _productReviewRepository.Table
+                .Where(r => r.ProductId == product.Id)
+                .ToListAsync();
+            foreach (var pr in reviews)
+                if (pr.IsApproved)
+                {
+                    approvedRatingSum += pr.Rating;
+                    approvedTotalReviews++;
+                }
+                else
+                {
+                    notApprovedRatingSum += pr.Rating;
+                    notApprovedTotalReviews++;
+                }
+
+            product.ApprovedRatingSum = approvedRatingSum;
+            product.NotApprovedRatingSum = notApprovedRatingSum;
+            product.ApprovedTotalReviews = approvedTotalReviews;
+            product.NotApprovedTotalReviews = notApprovedTotalReviews;
+            await UpdateProductAsync(product);
+        }
+
+        /// <summary>
+        /// Get low stock products
+        /// </summary>
+        /// <param name="vendorId">Vendor identifier; pass null to load all records</param>
+        /// <param name="loadPublishedOnly">Whether to load published products only; pass null to load all products, pass true to load only published products, pass false to load only unpublished products</param>
+        /// <param name="pageIndex">Page index</param>
+        /// <param name="pageSize">Page size</param>
+        /// <param name="getOnlyTotalCount">A value in indicating whether you want to load only total number of records. Set to "true" if you don't want to load data from database</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the products
+        /// </returns>
+        public virtual async Task<IPagedList<Product>> GetLowStockProductsAsync(int? vendorId = null, bool? loadPublishedOnly = true,
+            int pageIndex = 0, int pageSize = int.MaxValue, bool getOnlyTotalCount = false)
+        {
+            var query = _productRepository.Table;
+
+            //filter by products with tracking inventory
+            query = query.Where(product => product.ManageInventoryMethodId == (int)ManageInventoryMethod.ManageStock);
+
+            //filter by products with stock quantity less than the minimum
+            query = query.Where(product =>
+                (product.UseMultipleWarehouses ? _productWarehouseInventoryRepository.Table.Where(pwi => pwi.ProductId == product.Id).Sum(pwi => pwi.StockQuantity - pwi.ReservedQuantity)
+                    : product.StockQuantity) <= product.MinStockQuantity);
+
+            //ignore deleted products
+            query = query.Where(product => !product.Deleted);
+
+            //ignore grouped products
+            query = query.Where(product => product.ProductTypeId != (int)ProductType.GroupedProduct);
+
+            //filter by vendor
+            if (vendorId.HasValue && vendorId.Value > 0)
+                query = query.Where(product => product.VendorId == vendorId.Value);
+
+            //whether to load published products only
+            if (loadPublishedOnly.HasValue)
+                query = query.Where(product => product.Published == loadPublishedOnly.Value);
+
+            query = query.OrderBy(product => product.MinStockQuantity).ThenBy(product => product.DisplayOrder).ThenBy(product => product.Id);
+
+            return await query.ToPagedListAsync(pageIndex, pageSize, getOnlyTotalCount);
+        }
+
+        /// <summary>
+        /// Get low stock product combinations
+        /// </summary>
+        /// <param name="vendorId">Vendor identifier; pass null to load all records</param>
+        /// <param name="loadPublishedOnly">Whether to load combinations of published products only; pass null to load all products, pass true to load only published products, pass false to load only unpublished products</param>
+        /// <param name="pageIndex">Page index</param>
+        /// <param name="pageSize">Page size</param>
+        /// <param name="getOnlyTotalCount">A value in indicating whether you want to load only total number of records. Set to "true" if you don't want to load data from database</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the product combinations
+        /// </returns>
+        public virtual async Task<IPagedList<ProductAttributeCombination>> GetLowStockProductCombinationsAsync(int? vendorId = null, bool? loadPublishedOnly = true,
+            int pageIndex = 0, int pageSize = int.MaxValue, bool getOnlyTotalCount = false)
+        {
+            var combinations = from pac in _productAttributeCombinationRepository.Table
+                               join p in _productRepository.Table on pac.ProductId equals p.Id
+                               where
+                                   //filter by combinations with stock quantity less than the minimum
+                                   pac.StockQuantity <= pac.MinStockQuantity &&
+                                   //filter by products with tracking inventory by attributes
+                                   p.ManageInventoryMethodId == (int)ManageInventoryMethod.ManageStockByAttributes &&
+                                   //ignore deleted products
+                                   !p.Deleted &&
+                                   //ignore grouped products
+                                   p.ProductTypeId != (int)ProductType.GroupedProduct &&
+                                   //filter by vendor
+                                   ((vendorId ?? 0) == 0 || p.VendorId == vendorId) &&
+                                   //whether to load published products only
+                                   (loadPublishedOnly == null || p.Published == loadPublishedOnly)
+                               orderby pac.ProductId, pac.Id
+                               select pac;
+
+            return await combinations.ToPagedListAsync(pageIndex, pageSize, getOnlyTotalCount);
+        }
+
+        /// <summary>
+        /// Gets a product by SKU
+        /// </summary>
+        /// <param name="sku">SKU</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the product
+        /// </returns>
+        public virtual async Task<Product> GetProductBySkuAsync(string sku)
+        {
+            if (string.IsNullOrEmpty(sku))
+                return null;
+
+            sku = sku.Trim();
+
+            var query = from p in _productRepository.Table
+                        orderby p.Id
+                        where !p.Deleted &&
+                        p.Sku == sku
+                        select p;
+            var product = await query.FirstOrDefaultAsync();
+
+            return product;
+        }
+
+        /// <summary>
+        /// Gets a products by SKU array
+        /// </summary>
+        /// <param name="skuArray">SKU array</param>
+        /// <param name="vendorId">Vendor ID; 0 to load all records</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the products
+        /// </returns>
+        public async Task<IList<Product>> GetProductsBySkuAsync(string[] skuArray, int vendorId = 0)
+        {
+            if (skuArray == null)
+                throw new ArgumentNullException(nameof(skuArray));
+
+            var query = _productRepository.Table;
+            query = query.Where(p => !p.Deleted && skuArray.Contains(p.Sku));
+
+            if (vendorId != 0)
+                query = query.Where(p => p.VendorId == vendorId);
+
+            return await query.ToListAsync();
+        }
+
+        /// <summary>
+        /// Update HasTierPrices property (used for performance optimization)
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateHasTierPricesPropertyAsync(Product product)
+        {
+            if (product == null)
+                throw new ArgumentNullException(nameof(product));
+
+            product.HasTierPrices = (await GetTierPricesByProductAsync(product.Id)).Any();
+            await UpdateProductAsync(product);
+        }
+
+        /// <summary>
+        /// Update HasDiscountsApplied property (used for performance optimization)
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateHasDiscountsAppliedAsync(Product product)
+        {
+            if (product == null)
+                throw new ArgumentNullException(nameof(product));
+
+            product.HasDiscountsApplied = _discountProductMappingRepository.Table.Any(dpm => dpm.EntityId == product.Id);
+            await UpdateProductAsync(product);
+        }
+
+        /// <summary>
+        /// Gets number of products by vendor identifier
+        /// </summary>
+        /// <param name="vendorId">Vendor identifier</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the number of products
+        /// </returns>
+        public async Task<int> GetNumberOfProductsByVendorIdAsync(int vendorId)
+        {
+            if (vendorId == 0)
+                return 0;
+
+            return await _productRepository.Table.CountAsync(p => p.VendorId == vendorId && !p.Deleted);
+        }
+
+        /// <summary>
+        /// Parse "required product Ids" property
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <returns>A list of required product IDs</returns>
+        public virtual int[] ParseRequiredProductIds(Product product)
+        {
+            if (product == null)
+                throw new ArgumentNullException(nameof(product));
+
+            if (string.IsNullOrEmpty(product.RequiredProductIds))
+                return Array.Empty<int>();
+
+            var ids = new List<int>();
+
+            foreach (var idStr in product.RequiredProductIds
+                .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(x => x.Trim()))
+                if (int.TryParse(idStr, out var id))
+                    ids.Add(id);
+
+            return ids.ToArray();
+        }
+
+        /// <summary>
+        /// Get a value indicating whether a product is available now (availability dates)
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <param name="dateTime">Datetime to check; pass null to use current date</param>
+        /// <returns>Result</returns>
+        public virtual bool ProductIsAvailable(Product product, DateTime? dateTime = null)
+        {
+            if (product == null)
+                throw new ArgumentNullException(nameof(product));
+
+            dateTime ??= DateTime.UtcNow;
+
+            if (product.AvailableStartDateTimeUtc.HasValue && product.AvailableStartDateTimeUtc.Value > dateTime)
+                return false;
+
+            if (product.AvailableEndDateTimeUtc.HasValue && product.AvailableEndDateTimeUtc.Value < dateTime)
+                return false;
+
+            return true;
+        }
+
+        /// <summary>
+        /// Get a list of allowed quantities (parse 'AllowedQuantities' property)
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <returns>Result</returns>
+        public virtual int[] ParseAllowedQuantities(Product product)
+        {
+            if (product == null)
+                throw new ArgumentNullException(nameof(product));
+
+            var result = new List<int>();
+            if (!string.IsNullOrWhiteSpace(product.AllowedQuantities))
+                product.AllowedQuantities
+                    .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                    .ToList()
+                    .ForEach(qtyStr =>
+                    {
+                        if (int.TryParse(qtyStr.Trim(), out var qty))
+                            result.Add(qty);
+                    });
+
+            return result.ToArray();
+        }
+
+        /// <summary>
+        /// Get total quantity
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <param name="useReservedQuantity">
+        /// A value indicating whether we should consider "Reserved Quantity" property 
+        /// when "multiple warehouses" are used
+        /// </param>
+        /// <param name="warehouseId">
+        /// Warehouse identifier. Used to limit result to certain warehouse.
+        /// Used only with "multiple warehouses" enabled.
+        /// </param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the result
+        /// </returns>
+        public virtual async Task<int> GetTotalStockQuantityAsync(Product product, bool useReservedQuantity = true, int warehouseId = 0)
+        {
+            if (product == null)
+                throw new ArgumentNullException(nameof(product));
+
+            if (product.ManageInventoryMethod != ManageInventoryMethod.ManageStock)
+                //We can calculate total stock quantity when 'Manage inventory' property is set to 'Track inventory'
+                return 0;
+
+            if (!product.UseMultipleWarehouses)
+                return product.StockQuantity;
+
+            var pwi = _productWarehouseInventoryRepository.Table.Where(wi => wi.ProductId == product.Id);
+
+            if (warehouseId > 0)
+                pwi = pwi.Where(x => x.WarehouseId == warehouseId);
+
+            var result = await pwi.SumAsync(x => x.StockQuantity);
+            if (useReservedQuantity)
+                result -= await pwi.SumAsync(x => x.ReservedQuantity);
+
+            return result;
+        }
+
+        /// <summary>
+        /// Get number of rental periods (price ratio)
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <param name="startDate">Start date</param>
+        /// <param name="endDate">End date</param>
+        /// <returns>Number of rental periods</returns>
+        public virtual int GetRentalPeriods(Product product, DateTime startDate, DateTime endDate)
+        {
+            if (product == null)
+                throw new ArgumentNullException(nameof(product));
+
+            if (!product.IsRental)
+                return 1;
+
+            if (startDate.CompareTo(endDate) >= 0)
+                return 1;
+
+            int totalPeriods;
+            switch (product.RentalPricePeriod)
+            {
+                case RentalPricePeriod.Days:
+                    {
+                        var totalDaysToRent = Math.Max((endDate - startDate).TotalDays, 1);
+                        var configuredPeriodDays = product.RentalPriceLength;
+                        totalPeriods = Convert.ToInt32(Math.Ceiling(totalDaysToRent / configuredPeriodDays));
+                    }
+
+                    break;
+                case RentalPricePeriod.Weeks:
+                    {
+                        var totalDaysToRent = Math.Max((endDate - startDate).TotalDays, 1);
+                        var configuredPeriodDays = 7 * product.RentalPriceLength;
+                        totalPeriods = Convert.ToInt32(Math.Ceiling(totalDaysToRent / configuredPeriodDays));
+                    }
+
+                    break;
+                case RentalPricePeriod.Months:
+                    {
+                        //Source: http://stackoverflow.com/questions/4638993/difference-in-months-between-two-dates
+                        var totalMonthsToRent = (endDate.Year - startDate.Year) * 12 + endDate.Month - startDate.Month;
+                        if (startDate.AddMonths(totalMonthsToRent) < endDate)
+                            //several days added (not full month)
+                            totalMonthsToRent++;
+
+                        var configuredPeriodMonths = product.RentalPriceLength;
+                        totalPeriods = Convert.ToInt32(Math.Ceiling((double)totalMonthsToRent / configuredPeriodMonths));
+                    }
+
+                    break;
+                case RentalPricePeriod.Years:
+                    {
+                        var totalDaysToRent = Math.Max((endDate - startDate).TotalDays, 1);
+                        var configuredPeriodDays = 365 * product.RentalPriceLength;
+                        totalPeriods = Convert.ToInt32(Math.Ceiling(totalDaysToRent / configuredPeriodDays));
+                    }
+
+                    break;
+                default:
+                    throw new Exception("Not supported rental period");
+            }
+
+            return totalPeriods;
+        }
+
+        /// <summary>
+        /// Formats the stock availability/quantity message
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <param name="attributesXml">Selected product attributes in XML format (if specified)</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the stock message
+        /// </returns>
+        public virtual async Task<string> FormatStockMessageAsync(Product product, string attributesXml)
+        {
+            if (product == null)
+                throw new ArgumentNullException(nameof(product));
+
+            var stockMessage = string.Empty;
+
+            switch (product.ManageInventoryMethod)
+            {
+                case ManageInventoryMethod.ManageStock:
+                    stockMessage = await GetStockMessageAsync(product);
+                    break;
+                case ManageInventoryMethod.ManageStockByAttributes:
+                    stockMessage = await GetStockMessageForAttributesAsync(product, attributesXml);
+                    break;
+            }
+
+            return stockMessage;
+        }
+
+        /// <summary>
+        /// Formats SKU
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <param name="attributesXml">Attributes in XML format</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the sKU
+        /// </returns>
+        public virtual async Task<string> FormatSkuAsync(Product product, string attributesXml = null)
+        {
+            if (product == null)
+                throw new ArgumentNullException(nameof(product));
+
+            var (sku, _, _) = await GetSkuMpnGtinAsync(product, attributesXml);
+
+            return sku;
+        }
+
+        /// <summary>
+        /// Formats manufacturer part number
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <param name="attributesXml">Attributes in XML format</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the manufacturer part number
+        /// </returns>
+        public virtual async Task<string> FormatMpnAsync(Product product, string attributesXml = null)
+        {
+            if (product == null)
+                throw new ArgumentNullException(nameof(product));
+
+            var (_, manufacturerPartNumber, _) = await GetSkuMpnGtinAsync(product, attributesXml);
+
+            return manufacturerPartNumber;
+        }
+
+        /// <summary>
+        /// Formats GTIN
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <param name="attributesXml">Attributes in XML format</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the gTIN
+        /// </returns>
+        public virtual async Task<string> FormatGtinAsync(Product product, string attributesXml = null)
+        {
+            if (product == null)
+                throw new ArgumentNullException(nameof(product));
+
+            var (_, _, gtin) = await GetSkuMpnGtinAsync(product, attributesXml);
+
+            return gtin;
+        }
+
+        /// <summary>
+        /// Formats start/end date for rental product
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <param name="date">Date</param>
+        /// <returns>Formatted date</returns>
+        public virtual string FormatRentalDate(Product product, DateTime date)
+        {
+            if (product == null)
+                throw new ArgumentNullException(nameof(product));
+
+            if (!product.IsRental)
+                return null;
+
+            return date.ToShortDateString();
+        }
+
+        /// <summary>
+        /// Update product store mappings
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <param name="limitedToStoresIds">A list of store ids for mapping</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateProductStoreMappingsAsync(Product product, IList<int> limitedToStoresIds)
+        {
+            product.LimitedToStores = limitedToStoresIds.Any();
+
+            var existingStoreMappings = await _storeMappingService.GetStoreMappingsAsync(product);
+            var allStores = await _storeService.GetAllStoresAsync();
+            foreach (var store in allStores)
+            {
+                if (limitedToStoresIds.Contains(store.Id))
+                {
+                    //new store
+                    if (!existingStoreMappings.Any(sm => sm.StoreId == store.Id))
+                        await _storeMappingService.InsertStoreMappingAsync(product, store.Id);
+                }
+                else
+                {
+                    //remove store
+                    var storeMappingToDelete = existingStoreMappings.FirstOrDefault(sm => sm.StoreId == store.Id);
+                    if (storeMappingToDelete != null)
+                        await _storeMappingService.DeleteStoreMappingAsync(storeMappingToDelete);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets the value whether the sequence contains downloadable products
+        /// </summary>
+        /// <param name="productIds">Product identifiers</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the result
+        /// </returns>
+        public virtual async Task<bool> HasAnyDownloadableProductAsync(int[] productIds)
+        {
+            return await _productRepository.Table
+                .AnyAsync(p => productIds.Contains(p.Id) && p.IsDownload);
+        }
+
+        /// <summary>
+        /// Gets the value whether the sequence contains gift card products
+        /// </summary>
+        /// <param name="productIds">Product identifiers</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the result
+        /// </returns>
+        public virtual async Task<bool> HasAnyGiftCardProductAsync(int[] productIds)
+        {
+            return await _productRepository.Table
+                .AnyAsync(p => productIds.Contains(p.Id) && p.IsGiftCard);
+        }
+
+        /// <summary>
+        /// Gets the value whether the sequence contains recurring products
+        /// </summary>
+        /// <param name="productIds">Product identifiers</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the result
+        /// </returns>
+        public virtual async Task<bool> HasAnyRecurringProductAsync(int[] productIds)
+        {
+            return await _productRepository.Table
+                .AnyAsync(p => productIds.Contains(p.Id) && p.IsRecurring);
+        }
+
+        /// <summary>
+        /// Returns a list of sku of not existing products
+        /// </summary>
+        /// <param name="productSku">The sku of the products to check</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the list of sku not existing products
+        /// </returns>
+        public virtual async Task<string[]> GetNotExistingProductsAsync(string[] productSku)
+        {
+            if (productSku == null)
+                throw new ArgumentNullException(nameof(productSku));
+
+            var query = _productRepository.Table;
+            var queryFilter = productSku.Distinct().ToArray();
+            //filtering by SKU
+            var filter = await query.Select(p => p.Sku)
+                .Where(p => queryFilter.Contains(p))
+                .ToListAsync();
+
+            return queryFilter.Except(filter).ToArray();
+        }
+
+        #endregion
+
+        #region Inventory management methods
+
+        /// <summary>
+        /// Adjust inventory
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <param name="quantityToChange">Quantity to increase or decrease</param>
+        /// <param name="attributesXml">Attributes in XML format</param>
+        /// <param name="message">Message for the stock quantity history</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task AdjustInventoryAsync(Product product, int quantityToChange, string attributesXml = "", string message = "")
+        {
+            if (product == null)
+                throw new ArgumentNullException(nameof(product));
+
+            if (quantityToChange == 0)
+                return;
+
+            if (product.ManageInventoryMethod == ManageInventoryMethod.ManageStock)
+            {
+                //update stock quantity
+                if (product.UseMultipleWarehouses)
+                {
+                    //use multiple warehouses
+                    if (quantityToChange < 0)
+                        await ReserveInventoryAsync(product, quantityToChange);
+                    else
+                        await UnblockReservedInventoryAsync(product, quantityToChange);
+                }
+                else
+                {
+                    //do not use multiple warehouses
+                    //simple inventory management
+                    product.StockQuantity += quantityToChange;
+                    await UpdateProductAsync(product);
+
+                    //quantity change history
+                    await AddStockQuantityHistoryEntryAsync(product, quantityToChange, product.StockQuantity, product.WarehouseId, message);
+                }
+
+                var totalStock = await GetTotalStockQuantityAsync(product);
+
+                await ApplyLowStockActivityAsync(product, totalStock);
+
+                //send email notification
+                if (quantityToChange < 0 && totalStock < product.NotifyAdminForQuantityBelow)
+                {
+                    //do not inject IWorkflowMessageService via constructor because it'll cause circular references
+                    var workflowMessageService = EngineContext.Current.Resolve<IWorkflowMessageService>();
+                    await workflowMessageService.SendQuantityBelowStoreOwnerNotificationAsync(product, _localizationSettings.DefaultAdminLanguageId);
+                }
+            }
+
+            if (product.ManageInventoryMethod == ManageInventoryMethod.ManageStockByAttributes)
+            {
+                var combination = await _productAttributeParser.FindProductAttributeCombinationAsync(product, attributesXml);
+                if (combination != null)
+                {
+                    combination.StockQuantity += quantityToChange;
+                    await _productAttributeService.UpdateProductAttributeCombinationAsync(combination);
+
+                    //quantity change history
+                    await AddStockQuantityHistoryEntryAsync(product, quantityToChange, combination.StockQuantity, message: message, combinationId: combination.Id);
+
+                    if (product.AllowAddingOnlyExistingAttributeCombinations)
+                    {
+                        var totalStockByAllCombinations = await (await _productAttributeService.GetAllProductAttributeCombinationsAsync(product.Id))
+                            .ToAsyncEnumerable()
+                            .SumAsync(c => c.StockQuantity);
+
+                        await ApplyLowStockActivityAsync(product, totalStockByAllCombinations);
+                    }
+
+                    //send email notification
+                    if (quantityToChange < 0 && combination.StockQuantity < combination.NotifyAdminForQuantityBelow)
+                    {
+                        //do not inject IWorkflowMessageService via constructor because it'll cause circular references
+                        var workflowMessageService = EngineContext.Current.Resolve<IWorkflowMessageService>();
+                        await workflowMessageService.SendQuantityBelowStoreOwnerNotificationAsync(combination, _localizationSettings.DefaultAdminLanguageId);
+                    }
+                }
+            }
+
+            //bundled products
+            var attributeValues = await _productAttributeParser.ParseProductAttributeValuesAsync(attributesXml);
+            foreach (var attributeValue in attributeValues)
+            {
+                if (attributeValue.AttributeValueType != AttributeValueType.AssociatedToProduct)
+                    continue;
+
+                //associated product (bundle)
+                var associatedProduct = await GetProductByIdAsync(attributeValue.AssociatedProductId);
+                if (associatedProduct != null)
+                {
+                    await AdjustInventoryAsync(associatedProduct, quantityToChange * attributeValue.Quantity, message);
+                }
+            }
         }
 
         /// <summary>
@@ -1395,29 +1861,33 @@ namespace Nop.Services.Catalog
         /// <param name="product">Product</param>
         /// <param name="warehouseId">Warehouse identifier</param>
         /// <param name="quantity">Quantity, must be negative</param>
-        public virtual void BookReservedInventory(Product product, int warehouseId, int quantity)
+        /// <param name="message">Message for the stock quantity history</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task BookReservedInventoryAsync(Product product, int warehouseId, int quantity, string message = "")
         {
             if (product == null)
-                throw new ArgumentNullException("product");
+                throw new ArgumentNullException(nameof(product));
 
             if (quantity >= 0)
-                throw new ArgumentException("Value must be negative.", "quantity");
+                throw new ArgumentException("Value must be negative.", nameof(quantity));
 
             //only products with "use multiple warehouses" are handled this way
-            if (product.ManageInventoryMethod != ManageInventoryMethod.ManageStock)
-                return;
-            if (!product.UseMultipleWarehouses)
+            if (product.ManageInventoryMethod != ManageInventoryMethod.ManageStock || !product.UseMultipleWarehouses)
                 return;
 
-            var pwi = product.ProductWarehouseInventory.FirstOrDefault(pi => pi.WarehouseId == warehouseId);
+            var pwi = await _productWarehouseInventoryRepository.Table
+
+                .FirstOrDefaultAsync(wi => wi.ProductId == product.Id && wi.WarehouseId == warehouseId);
             if (pwi == null)
                 return;
 
             pwi.ReservedQuantity = Math.Max(pwi.ReservedQuantity + quantity, 0);
             pwi.StockQuantity += quantity;
-            UpdateProduct(product);
 
-            //TODO add support for bundled products (AttributesXml)
+            await UpdateProductWarehouseInventoryAsync(pwi);
+
+            //quantity change history
+            await AddStockQuantityHistoryEntryAsync(product, quantity, pwi.StockQuantity, warehouseId, message);
         }
 
         /// <summary>
@@ -1425,26 +1895,30 @@ namespace Nop.Services.Catalog
         /// </summary>
         /// <param name="product">product</param>
         /// <param name="shipmentItem">Shipment item</param>
-        /// <returns>Quantity reversed</returns>
-        public virtual int ReverseBookedInventory(Product product, ShipmentItem shipmentItem)
+        /// <param name="message">Message for the stock quantity history</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the quantity reversed
+        /// </returns>
+        public virtual async Task<int> ReverseBookedInventoryAsync(Product product, ShipmentItem shipmentItem, string message = "")
         {
             if (product == null)
-                throw new ArgumentNullException("product");
+                throw new ArgumentNullException(nameof(product));
 
             if (shipmentItem == null)
-                throw new ArgumentNullException("shipmentItem");
-            
+                throw new ArgumentNullException(nameof(shipmentItem));
+
             //only products with "use multiple warehouses" are handled this way
-            if (product.ManageInventoryMethod != ManageInventoryMethod.ManageStock)
-                return 0;
-            if (!product.UseMultipleWarehouses)
+            if (product.ManageInventoryMethod != ManageInventoryMethod.ManageStock || !product.UseMultipleWarehouses)
                 return 0;
 
-            var pwi = product.ProductWarehouseInventory.FirstOrDefault(x => x.WarehouseId == shipmentItem.WarehouseId);
+            var pwi = await _productWarehouseInventoryRepository.Table
+
+                .FirstOrDefaultAsync(wi => wi.ProductId == product.Id && wi.WarehouseId == shipmentItem.WarehouseId);
             if (pwi == null)
                 return 0;
 
-            var shipment = shipmentItem.Shipment;
+            var shipment = await _shipmentRepository.GetByIdAsync(shipmentItem.ShipmentId, cache => default);
 
             //not shipped yet? hence "BookReservedInventory" method was not invoked
             if (!shipment.ShippedDateUtc.HasValue)
@@ -1454,9 +1928,11 @@ namespace Nop.Services.Catalog
 
             pwi.StockQuantity += qty;
             pwi.ReservedQuantity += qty;
-            UpdateProduct(product);
 
-            //TODO add support for bundled products (AttributesXml)
+            await UpdateProductWarehouseInventoryAsync(pwi);
+
+            //quantity change history
+            await AddStockQuantityHistoryEntryAsync(product, qty, pwi.StockQuantity, shipmentItem.WarehouseId, message);
 
             return qty;
         }
@@ -1469,33 +1945,32 @@ namespace Nop.Services.Catalog
         /// Deletes a related product
         /// </summary>
         /// <param name="relatedProduct">Related product</param>
-        public virtual void DeleteRelatedProduct(RelatedProduct relatedProduct)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteRelatedProductAsync(RelatedProduct relatedProduct)
         {
-            if (relatedProduct == null)
-                throw new ArgumentNullException("relatedProduct");
-
-            _relatedProductRepository.Delete(relatedProduct);
-
-            //event notification
-            _eventPublisher.EntityDeleted(relatedProduct);
+            await _relatedProductRepository.DeleteAsync(relatedProduct);
         }
 
         /// <summary>
         /// Gets related products by product identifier
         /// </summary>
-        /// <param name="productId1">The first product identifier</param>
+        /// <param name="productId">The first product identifier</param>
         /// <param name="showHidden">A value indicating whether to show hidden records</param>
-        /// <returns>Related products</returns>
-        public virtual IList<RelatedProduct> GetRelatedProductsByProductId1(int productId1, bool showHidden = false)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the related products
+        /// </returns>
+        public virtual async Task<IList<RelatedProduct>> GetRelatedProductsByProductId1Async(int productId, bool showHidden = false)
         {
             var query = from rp in _relatedProductRepository.Table
                         join p in _productRepository.Table on rp.ProductId2 equals p.Id
-                        where rp.ProductId1 == productId1 &&
+                        where rp.ProductId1 == productId &&
                         !p.Deleted &&
                         (showHidden || p.Published)
-                        orderby rp.DisplayOrder
+                        orderby rp.DisplayOrder, rp.Id
                         select rp;
-            var relatedProducts = query.ToList();
+
+            var relatedProducts = await _staticCacheManager.GetAsync(_staticCacheManager.PrepareKeyForDefaultCache(NopCatalogDefaults.RelatedProductsCacheKey, productId, showHidden), async () => await query.ToListAsync());
 
             return relatedProducts;
         }
@@ -1504,43 +1979,48 @@ namespace Nop.Services.Catalog
         /// Gets a related product
         /// </summary>
         /// <param name="relatedProductId">Related product identifier</param>
-        /// <returns>Related product</returns>
-        public virtual RelatedProduct GetRelatedProductById(int relatedProductId)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the related product
+        /// </returns>
+        public virtual async Task<RelatedProduct> GetRelatedProductByIdAsync(int relatedProductId)
         {
-            if (relatedProductId == 0)
-                return null;
-            
-            return _relatedProductRepository.GetById(relatedProductId);
+            return await _relatedProductRepository.GetByIdAsync(relatedProductId, cache => default);
         }
 
         /// <summary>
         /// Inserts a related product
         /// </summary>
         /// <param name="relatedProduct">Related product</param>
-        public virtual void InsertRelatedProduct(RelatedProduct relatedProduct)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task InsertRelatedProductAsync(RelatedProduct relatedProduct)
         {
-            if (relatedProduct == null)
-                throw new ArgumentNullException("relatedProduct");
-
-            _relatedProductRepository.Insert(relatedProduct);
-
-            //event notification
-            _eventPublisher.EntityInserted(relatedProduct);
+            await _relatedProductRepository.InsertAsync(relatedProduct);
         }
 
         /// <summary>
         /// Updates a related product
         /// </summary>
         /// <param name="relatedProduct">Related product</param>
-        public virtual void UpdateRelatedProduct(RelatedProduct relatedProduct)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateRelatedProductAsync(RelatedProduct relatedProduct)
         {
-            if (relatedProduct == null)
-                throw new ArgumentNullException("relatedProduct");
+            await _relatedProductRepository.UpdateAsync(relatedProduct);
+        }
 
-            _relatedProductRepository.Update(relatedProduct);
-
-            //event notification
-            _eventPublisher.EntityUpdated(relatedProduct);
+        /// <summary>
+        /// Finds a related product item by specified identifiers
+        /// </summary>
+        /// <param name="source">Source</param>
+        /// <param name="productId1">The first product identifier</param>
+        /// <param name="productId2">The second product identifier</param>
+        /// <returns>Related product</returns>
+        public virtual RelatedProduct FindRelatedProduct(IList<RelatedProduct> source, int productId1, int productId2)
+        {
+            foreach (var relatedProduct in source)
+                if (relatedProduct.ProductId1 == productId1 && relatedProduct.ProductId2 == productId2)
+                    return relatedProduct;
+            return null;
         }
 
         #endregion
@@ -1551,15 +2031,10 @@ namespace Nop.Services.Catalog
         /// Deletes a cross-sell product
         /// </summary>
         /// <param name="crossSellProduct">Cross-sell identifier</param>
-        public virtual void DeleteCrossSellProduct(CrossSellProduct crossSellProduct)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteCrossSellProductAsync(CrossSellProduct crossSellProduct)
         {
-            if (crossSellProduct == null)
-                throw new ArgumentNullException("crossSellProduct");
-
-            _crossSellProductRepository.Delete(crossSellProduct);
-
-            //event notification
-            _eventPublisher.EntityDeleted(crossSellProduct);
+            await _crossSellProductRepository.DeleteAsync(crossSellProduct);
         }
 
         /// <summary>
@@ -1567,61 +2042,36 @@ namespace Nop.Services.Catalog
         /// </summary>
         /// <param name="productId1">The first product identifier</param>
         /// <param name="showHidden">A value indicating whether to show hidden records</param>
-        /// <returns>Cross-sell products</returns>
-        public virtual IList<CrossSellProduct> GetCrossSellProductsByProductId1(int productId1, bool showHidden = false)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the cross-sell products
+        /// </returns>
+        public virtual async Task<IList<CrossSellProduct>> GetCrossSellProductsByProductId1Async(int productId1, bool showHidden = false)
         {
-            var query = from csp in _crossSellProductRepository.Table
-                        join p in _productRepository.Table on csp.ProductId2 equals p.Id
-                        where csp.ProductId1 == productId1 &&
-                        !p.Deleted &&
-                        (showHidden || p.Published)
-                        orderby csp.Id
-                        select csp;
-            var crossSellProducts = query.ToList();
-            return crossSellProducts;
+            return await GetCrossSellProductsByProductIdsAsync(new[] { productId1 }, showHidden);
         }
 
         /// <summary>
         /// Gets a cross-sell product
         /// </summary>
         /// <param name="crossSellProductId">Cross-sell product identifier</param>
-        /// <returns>Cross-sell product</returns>
-        public virtual CrossSellProduct GetCrossSellProductById(int crossSellProductId)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the cross-sell product
+        /// </returns>
+        public virtual async Task<CrossSellProduct> GetCrossSellProductByIdAsync(int crossSellProductId)
         {
-            if (crossSellProductId == 0)
-                return null;
-
-            return _crossSellProductRepository.GetById(crossSellProductId);
+            return await _crossSellProductRepository.GetByIdAsync(crossSellProductId, cache => default);
         }
 
         /// <summary>
         /// Inserts a cross-sell product
         /// </summary>
         /// <param name="crossSellProduct">Cross-sell product</param>
-        public virtual void InsertCrossSellProduct(CrossSellProduct crossSellProduct)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task InsertCrossSellProductAsync(CrossSellProduct crossSellProduct)
         {
-            if (crossSellProduct == null)
-                throw new ArgumentNullException("crossSellProduct");
-
-            _crossSellProductRepository.Insert(crossSellProduct);
-
-            //event notification
-            _eventPublisher.EntityInserted(crossSellProduct);
-        }
-
-        /// <summary>
-        /// Updates a cross-sell product
-        /// </summary>
-        /// <param name="crossSellProduct">Cross-sell product</param>
-        public virtual void UpdateCrossSellProduct(CrossSellProduct crossSellProduct)
-        {
-            if (crossSellProduct == null)
-                throw new ArgumentNullException("crossSellProduct");
-
-            _crossSellProductRepository.Update(crossSellProduct);
-
-            //event notification
-            _eventPublisher.EntityUpdated(crossSellProduct);
+            await _crossSellProductRepository.InsertAsync(crossSellProduct);
         }
 
         /// <summary>
@@ -1629,115 +2079,177 @@ namespace Nop.Services.Catalog
         /// </summary>
         /// <param name="cart">Shopping cart</param>
         /// <param name="numberOfProducts">Number of products to return</param>
-        /// <returns>Cross-sells</returns>
-        public virtual IList<Product> GetCrosssellProductsByShoppingCart(IList<ShoppingCartItem> cart, int numberOfProducts)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the cross-sells
+        /// </returns>
+        public virtual async Task<IList<Product>> GetCrossSellProductsByShoppingCartAsync(IList<ShoppingCartItem> cart, int numberOfProducts)
         {
             var result = new List<Product>();
 
             if (numberOfProducts == 0)
                 return result;
 
-            if (cart == null || cart.Count == 0)
+            if (cart == null || !cart.Any())
                 return result;
 
             var cartProductIds = new List<int>();
             foreach (var sci in cart)
             {
-                int prodId = sci.ProductId;
+                var prodId = sci.ProductId;
                 if (!cartProductIds.Contains(prodId))
                     cartProductIds.Add(prodId);
             }
 
-            foreach (var sci in cart)
+            var productIds = cart.Select(sci => sci.ProductId).ToArray();
+            var crossSells = await GetCrossSellProductsByProductIdsAsync(productIds);
+            foreach (var crossSell in crossSells)
             {
-                var crossSells = GetCrossSellProductsByProductId1(sci.ProductId);
-                foreach (var crossSell in crossSells)
-                {
-                    //validate that this product is not added to result yet
-                    //validate that this product is not in the cart
-                    if (result.Find(p => p.Id == crossSell.ProductId2) == null &&
-                        !cartProductIds.Contains(crossSell.ProductId2))
-                    {
-                        var productToAdd = GetProductById(crossSell.ProductId2);
-                        //validate product
-                        if (productToAdd == null || productToAdd.Deleted || !productToAdd.Published)
-                            continue;
+                //validate that this product is not added to result yet
+                //validate that this product is not in the cart
+                if (result.Find(p => p.Id == crossSell.ProductId2) != null || cartProductIds.Contains(crossSell.ProductId2))
+                    continue;
 
-                        //add a product to result
-                        result.Add(productToAdd);
-                        if (result.Count >= numberOfProducts)
-                            return result;
-                    }
-                }
+                var productToAdd = await GetProductByIdAsync(crossSell.ProductId2);
+                //validate product
+                if (productToAdd == null || productToAdd.Deleted || !productToAdd.Published)
+                    continue;
+
+                //add a product to result
+                result.Add(productToAdd);
+                if (result.Count >= numberOfProducts)
+                    return result;
             }
+
             return result;
         }
+
+        /// <summary>
+        /// Finds a cross-sell product item by specified identifiers
+        /// </summary>
+        /// <param name="source">Source</param>
+        /// <param name="productId1">The first product identifier</param>
+        /// <param name="productId2">The second product identifier</param>
+        /// <returns>Cross-sell product</returns>
+        public virtual CrossSellProduct FindCrossSellProduct(IList<CrossSellProduct> source, int productId1, int productId2)
+        {
+            foreach (var crossSellProduct in source)
+                if (crossSellProduct.ProductId1 == productId1 && crossSellProduct.ProductId2 == productId2)
+                    return crossSellProduct;
+            return null;
+        }
+
         #endregion
-        
+
         #region Tier prices
-        
+
+        /// <summary>
+        /// Gets a product tier prices for customer
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <param name="customer">Customer</param>
+        /// <param name="storeId">Store identifier</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task<IList<TierPrice>> GetTierPricesAsync(Product product, Customer customer, int storeId)
+        {
+            if (product is null)
+                throw new ArgumentNullException(nameof(product));
+
+            if (customer is null)
+                throw new ArgumentNullException(nameof(customer));
+
+            if (!product.HasTierPrices)
+                return null;
+
+            //get actual tier prices
+            return (await GetTierPricesByProductAsync(product.Id))
+                .OrderBy(price => price.Quantity)
+                .FilterByStore(storeId)
+                .FilterByCustomerRole(await _customerService.GetCustomerRoleIdsAsync(customer))
+                .FilterByDate()
+                .RemoveDuplicatedQuantities()
+                .ToList();
+        }
+
+        /// <summary>
+        /// Gets a tier prices by product identifier
+        /// </summary>
+        /// <param name="productId">Product identifier</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task<IList<TierPrice>> GetTierPricesByProductAsync(int productId)
+        {
+            var query = _tierPriceRepository.Table.Where(tp => tp.ProductId == productId);
+
+            return await _staticCacheManager.GetAsync(_staticCacheManager.PrepareKeyForDefaultCache(NopCatalogDefaults.TierPricesByProductCacheKey, productId), async () => await query.ToListAsync());
+        }
+
         /// <summary>
         /// Deletes a tier price
         /// </summary>
         /// <param name="tierPrice">Tier price</param>
-        public virtual void DeleteTierPrice(TierPrice tierPrice)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteTierPriceAsync(TierPrice tierPrice)
         {
-            if (tierPrice == null)
-                throw new ArgumentNullException("tierPrice");
-
-            _tierPriceRepository.Delete(tierPrice);
-
-            _cacheManager.RemoveByPattern(PRODUCTS_PATTERN_KEY);
-
-            //event notification
-            _eventPublisher.EntityDeleted(tierPrice);
+            await _tierPriceRepository.DeleteAsync(tierPrice);
         }
 
         /// <summary>
         /// Gets a tier price
         /// </summary>
         /// <param name="tierPriceId">Tier price identifier</param>
-        /// <returns>Tier price</returns>
-        public virtual TierPrice GetTierPriceById(int tierPriceId)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the ier price
+        /// </returns>
+        public virtual async Task<TierPrice> GetTierPriceByIdAsync(int tierPriceId)
         {
-            if (tierPriceId == 0)
-                return null;
-            
-            return _tierPriceRepository.GetById(tierPriceId);
+            return await _tierPriceRepository.GetByIdAsync(tierPriceId, cache => default);
         }
 
         /// <summary>
         /// Inserts a tier price
         /// </summary>
         /// <param name="tierPrice">Tier price</param>
-        public virtual void InsertTierPrice(TierPrice tierPrice)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task InsertTierPriceAsync(TierPrice tierPrice)
         {
-            if (tierPrice == null)
-                throw new ArgumentNullException("tierPrice");
-
-            _tierPriceRepository.Insert(tierPrice);
-
-            _cacheManager.RemoveByPattern(PRODUCTS_PATTERN_KEY);
-
-            //event notification
-            _eventPublisher.EntityInserted(tierPrice);
+            await _tierPriceRepository.InsertAsync(tierPrice);
         }
 
         /// <summary>
         /// Updates the tier price
         /// </summary>
         /// <param name="tierPrice">Tier price</param>
-        public virtual void UpdateTierPrice(TierPrice tierPrice)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateTierPriceAsync(TierPrice tierPrice)
         {
-            if (tierPrice == null)
-                throw new ArgumentNullException("tierPrice");
+            await _tierPriceRepository.UpdateAsync(tierPrice);
+        }
 
-            _tierPriceRepository.Update(tierPrice);
+        /// <summary>
+        /// Gets a preferred tier price
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <param name="customer">Customer</param>
+        /// <param name="storeId">Store identifier</param>
+        /// <param name="quantity">Quantity</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the ier price
+        /// </returns>
+        public virtual async Task<TierPrice> GetPreferredTierPriceAsync(Product product, Customer customer, int storeId, int quantity)
+        {
+            if (product is null)
+                throw new ArgumentNullException(nameof(product));
 
-            _cacheManager.RemoveByPattern(PRODUCTS_PATTERN_KEY);
+            if (customer is null)
+                throw new ArgumentNullException(nameof(customer));
 
-            //event notification
-            _eventPublisher.EntityUpdated(tierPrice);
+            if (!product.HasTierPrices)
+                return null;
+
+            //get the most suitable tier price based on the passed quantity
+            return (await GetTierPricesAsync(product, customer, storeId))?.LastOrDefault(price => quantity >= price.Quantity);
         }
 
         #endregion
@@ -1748,29 +2260,29 @@ namespace Nop.Services.Catalog
         /// Deletes a product picture
         /// </summary>
         /// <param name="productPicture">Product picture</param>
-        public virtual void DeleteProductPicture(ProductPicture productPicture)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteProductPictureAsync(ProductPicture productPicture)
         {
-            if (productPicture == null)
-                throw new ArgumentNullException("productPicture");
-
-            _productPictureRepository.Delete(productPicture);
-
-            //event notification
-            _eventPublisher.EntityDeleted(productPicture);
+            await _productPictureRepository.DeleteAsync(productPicture);
         }
 
         /// <summary>
         /// Gets a product pictures by product identifier
         /// </summary>
         /// <param name="productId">The product identifier</param>
-        /// <returns>Product pictures</returns>
-        public virtual IList<ProductPicture> GetProductPicturesByProductId(int productId)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the product pictures
+        /// </returns>
+        public virtual async Task<IList<ProductPicture>> GetProductPicturesByProductIdAsync(int productId)
         {
             var query = from pp in _productPictureRepository.Table
                         where pp.ProductId == productId
-                        orderby pp.DisplayOrder
+                        orderby pp.DisplayOrder, pp.Id
                         select pp;
-            var productPictures = query.ToList();
+
+            var productPictures = await query.ToListAsync();
+
             return productPictures;
         }
 
@@ -1778,43 +2290,147 @@ namespace Nop.Services.Catalog
         /// Gets a product picture
         /// </summary>
         /// <param name="productPictureId">Product picture identifier</param>
-        /// <returns>Product picture</returns>
-        public virtual ProductPicture GetProductPictureById(int productPictureId)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the product picture
+        /// </returns>
+        public virtual async Task<ProductPicture> GetProductPictureByIdAsync(int productPictureId)
         {
-            if (productPictureId == 0)
-                return null;
-
-            return _productPictureRepository.GetById(productPictureId);
+            return await _productPictureRepository.GetByIdAsync(productPictureId, cache => default);
         }
 
         /// <summary>
         /// Inserts a product picture
         /// </summary>
         /// <param name="productPicture">Product picture</param>
-        public virtual void InsertProductPicture(ProductPicture productPicture)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task InsertProductPictureAsync(ProductPicture productPicture)
         {
-            if (productPicture == null)
-                throw new ArgumentNullException("productPicture");
-
-            _productPictureRepository.Insert(productPicture);
-
-            //event notification
-            _eventPublisher.EntityInserted(productPicture);
+            await _productPictureRepository.InsertAsync(productPicture);
         }
 
         /// <summary>
         /// Updates a product picture
         /// </summary>
         /// <param name="productPicture">Product picture</param>
-        public virtual void UpdateProductPicture(ProductPicture productPicture)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateProductPictureAsync(ProductPicture productPicture)
         {
-            if (productPicture == null)
-                throw new ArgumentNullException("productPicture");
+            await _productPictureRepository.UpdateAsync(productPicture);
+        }
 
-            _productPictureRepository.Update(productPicture);
+        /// <summary>
+        /// Get the IDs of all product images 
+        /// </summary>
+        /// <param name="productsIds">Products IDs</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the all picture identifiers grouped by product ID
+        /// </returns>
+        public async Task<IDictionary<int, int[]>> GetProductsImagesIdsAsync(int[] productsIds)
+        {
+            var productPictures = await _productPictureRepository.Table
+                .Where(p => productsIds.Contains(p.ProductId))
+                .ToListAsync();
 
-            //event notification
-            _eventPublisher.EntityUpdated(productPicture);
+            return productPictures.GroupBy(p => p.ProductId).ToDictionary(p => p.Key, p => p.Select(p1 => p1.PictureId).ToArray());
+        }
+
+        /// <summary>
+        /// Get products for which a discount is applied
+        /// </summary>
+        /// <param name="discountId">Discount identifier; pass null to load all records</param>
+        /// <param name="showHidden">A value indicating whether to load deleted products</param>
+        /// <param name="pageIndex">Page index</param>
+        /// <param name="pageSize">Page size</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the list of products
+        /// </returns>
+        public virtual async Task<IPagedList<Product>> GetProductsWithAppliedDiscountAsync(int? discountId = null,
+            bool showHidden = false, int pageIndex = 0, int pageSize = int.MaxValue)
+        {
+            var products = _productRepository.Table.Where(product => product.HasDiscountsApplied);
+
+            if (discountId.HasValue)
+                products = from product in products
+                           join dpm in _discountProductMappingRepository.Table on product.Id equals dpm.EntityId
+                           where dpm.DiscountId == discountId.Value
+                           select product;
+
+            if (!showHidden)
+                products = products.Where(product => !product.Deleted);
+
+            products = products.OrderBy(product => product.DisplayOrder).ThenBy(product => product.Id);
+
+            return await products.ToPagedListAsync(pageIndex, pageSize);
+        }
+
+        #endregion
+
+        #region Product videos
+
+        /// <summary>
+        /// Deletes a product video
+        /// </summary>
+        /// <param name="productVideo">Product video</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteProductVideoAsync(ProductVideo productVideo)
+        {
+            await _productVideoRepository.DeleteAsync(productVideo);
+        }
+
+        /// <summary>
+        /// Gets a product videos by product identifier
+        /// </summary>
+        /// <param name="productId">The product identifier</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the product videos
+        /// </returns>
+        public virtual async Task<IList<ProductVideo>> GetProductVideosByProductIdAsync(int productId)
+        {
+            var query = from pvm in _productVideoRepository.Table
+                        where pvm.ProductId == productId
+                        orderby pvm.DisplayOrder, pvm.Id
+                        select pvm;
+
+            var productVideos = await query.ToListAsync();
+
+            return productVideos;
+        }
+
+        /// <summary>
+        /// Gets a product video
+        /// </summary>
+        /// <param name="productPictureId">Product video identifier</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the product video
+        /// </returns>
+        public virtual async Task<ProductVideo> GetProductVideoByIdAsync(int productVideoId)
+        {
+            return await _productVideoRepository.GetByIdAsync(productVideoId, cache => default);
+        }
+
+        /// <summary>
+        /// Inserts a product video
+        /// </summary>
+        /// <param name="productVideo">Product picture</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task InsertProductVideoAsync(ProductVideo productVideo)
+        {
+            await _productVideoRepository.InsertAsync(productVideo);
+        }
+
+        /// <summary>
+        /// Updates a product video
+        /// </summary>
+        /// <param name="productVideo">Product video</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateProductVideoAsync(ProductVideo productVideo)
+        {
+            await _productVideoRepository.UpdateAsync(productVideo);
         }
 
         #endregion
@@ -1824,109 +2440,421 @@ namespace Nop.Services.Catalog
         /// <summary>
         /// Gets all product reviews
         /// </summary>
-        /// <param name="customerId">Customer identifier; 0 to load all records</param>
+        /// <param name="customerId">Customer identifier (who wrote a review); 0 to load all records</param>
         /// <param name="approved">A value indicating whether to content is approved; null to load all records</param> 
         /// <param name="fromUtc">Item creation from; null to load all records</param>
         /// <param name="toUtc">Item item creation to; null to load all records</param>
         /// <param name="message">Search title or review text; null to load all records</param>
-        /// <param name="storeId">The store identifier; pass 0 to load all records</param>
+        /// <param name="storeId">The store identifier, where a review has been created; pass 0 to load all records</param>
         /// <param name="productId">The product identifier; pass 0 to load all records</param>
-        /// <returns>Reviews</returns>
-        public virtual IList<ProductReview> GetAllProductReviews(int customerId, bool? approved,
+        /// <param name="vendorId">The vendor identifier (limit to products of this vendor); pass 0 to load all records</param>
+        /// <param name="showHidden">A value indicating whether to show hidden records</param>
+        /// <param name="pageIndex">Page index</param>
+        /// <param name="pageSize">Page size</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the reviews
+        /// </returns>
+        public virtual async Task<IPagedList<ProductReview>> GetAllProductReviewsAsync(int customerId = 0, bool? approved = null,
             DateTime? fromUtc = null, DateTime? toUtc = null,
-            string message = null, int storeId = 0, int productId = 0)
+            string message = null, int storeId = 0, int productId = 0, int vendorId = 0, bool showHidden = false,
+            int pageIndex = 0, int pageSize = int.MaxValue)
         {
-            var query = _productReviewRepository.Table;
-            if (approved.HasValue)
-                query = query.Where(c => c.IsApproved == approved);
-            if (customerId > 0)
-                query = query.Where(c => c.CustomerId == customerId);
-            if (fromUtc.HasValue)
-                query = query.Where(c => fromUtc.Value <= c.CreatedOnUtc);
-            if (toUtc.HasValue)
-                query = query.Where(c => toUtc.Value >= c.CreatedOnUtc);
-            if (!String.IsNullOrEmpty(message))
-                query = query.Where(c => c.Title.Contains(message) || c.ReviewText.Contains(message));
-            if (storeId > 0)
-                query = query.Where(c => c.StoreId == storeId);
-            if (productId > 0)
-                query = query.Where(c => c.ProductId == productId);
+            var productReviews = await _productReviewRepository.GetAllPagedAsync(async query =>
+            {
+                if (!showHidden)
+                {
+                    var productsQuery = _productRepository.Table.Where(p => p.Published);
 
-            query = query.OrderBy(c => c.CreatedOnUtc);
-            var content = query.ToList();
-            return content;
+                    //apply store mapping constraints
+                    productsQuery = await _storeMappingService.ApplyStoreMapping(productsQuery, storeId);
+
+                    //apply ACL constraints
+                    var customer = await _workContext.GetCurrentCustomerAsync();
+                    productsQuery = await _aclService.ApplyAcl(productsQuery, customer);
+
+                    query = query.Where(review => productsQuery.Any(product => product.Id == review.ProductId));
+                }
+
+                if (approved.HasValue)
+                    query = query.Where(pr => pr.IsApproved == approved);
+                if (customerId > 0)
+                    query = query.Where(pr => pr.CustomerId == customerId);
+                if (fromUtc.HasValue)
+                    query = query.Where(pr => fromUtc.Value <= pr.CreatedOnUtc);
+                if (toUtc.HasValue)
+                    query = query.Where(pr => toUtc.Value >= pr.CreatedOnUtc);
+                if (!string.IsNullOrEmpty(message))
+                    query = query.Where(pr => pr.Title.Contains(message) || pr.ReviewText.Contains(message));
+                if (storeId > 0)
+                    query = query.Where(pr => pr.StoreId == storeId);
+                if (productId > 0)
+                    query = query.Where(pr => pr.ProductId == productId);
+
+                query = from productReview in query
+                        join product in _productRepository.Table on productReview.ProductId equals product.Id
+                        where
+                            (vendorId == 0 || product.VendorId == vendorId) &&
+                            //ignore deleted products
+                            !product.Deleted
+                        select productReview;
+
+                query = _catalogSettings.ProductReviewsSortByCreatedDateAscending
+                    ? query.OrderBy(pr => pr.CreatedOnUtc).ThenBy(pr => pr.Id)
+                    : query.OrderByDescending(pr => pr.CreatedOnUtc).ThenBy(pr => pr.Id);
+
+                return query;
+            }, pageIndex, pageSize);
+
+            return productReviews;
         }
 
         /// <summary>
         /// Gets product review
         /// </summary>
         /// <param name="productReviewId">Product review identifier</param>
-        /// <returns>Product review</returns>
-        public virtual ProductReview GetProductReviewById(int productReviewId)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the product review
+        /// </returns>
+        public virtual async Task<ProductReview> GetProductReviewByIdAsync(int productReviewId)
         {
-            if (productReviewId == 0)
-                return null;
-
-            return _productReviewRepository.GetById(productReviewId);
+            return await _productReviewRepository.GetByIdAsync(productReviewId, cache => default);
         }
 
         /// <summary>
         /// Get product reviews by identifiers
         /// </summary>
         /// <param name="productReviewIds">Product review identifiers</param>
-        /// <returns>Product reviews</returns>
-        public virtual IList<ProductReview> GetProducReviewsByIds(int[] productReviewIds)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the product reviews
+        /// </returns>
+        public virtual async Task<IList<ProductReview>> GetProductReviewsByIdsAsync(int[] productReviewIds)
         {
-            if (productReviewIds == null || productReviewIds.Length == 0)
-                return new List<ProductReview>();
+            return await _productReviewRepository.GetByIdsAsync(productReviewIds);
+        }
 
-            var query = from pr in _productReviewRepository.Table
-                        where productReviewIds.Contains(pr.Id)
-                        select pr;
-            var productReviews = query.ToList();
-            //sort by passed identifiers
-            var sortedProductReviews = new List<ProductReview>();
-            foreach (int id in productReviewIds)
-            {
-                var productReview = productReviews.Find(x => x.Id == id);
-                if (productReview != null)
-                    sortedProductReviews.Add(productReview);
-            }
-            return sortedProductReviews;
+        /// <summary>
+        /// Inserts a product review
+        /// </summary>
+        /// <param name="productReview">Product review</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task InsertProductReviewAsync(ProductReview productReview)
+        {
+            await _productReviewRepository.InsertAsync(productReview);
         }
 
         /// <summary>
         /// Deletes a product review
         /// </summary>
         /// <param name="productReview">Product review</param>
-        public virtual void DeleteProductReview(ProductReview productReview)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteProductReviewAsync(ProductReview productReview)
         {
-            if (productReview == null)
-                throw new ArgumentNullException("productReview");
+            await _productReviewRepository.DeleteAsync(productReview);
+        }
 
-            _productReviewRepository.Delete(productReview);
+        /// <summary>
+        /// Deletes product reviews
+        /// </summary>
+        /// <param name="productReviews">Product reviews</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteProductReviewsAsync(IList<ProductReview> productReviews)
+        {
+            await _productReviewRepository.DeleteAsync(productReviews);
+        }
 
-            _cacheManager.RemoveByPattern(PRODUCTS_PATTERN_KEY);
-            //event notification
-            _eventPublisher.EntityDeleted(productReview);
+        /// <summary>
+        /// Sets or create a product review helpfulness record
+        /// </summary>
+        /// <param name="productReview">Product review</param>
+        /// <param name="helpfulness">Value indicating whether a review a helpful</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task SetProductReviewHelpfulnessAsync(ProductReview productReview, bool helpfulness)
+        {
+            if (productReview is null)
+                throw new ArgumentNullException(nameof(productReview));
+
+            var customer = await _workContext.GetCurrentCustomerAsync();
+            var prh = _productReviewHelpfulnessRepository.Table
+                .SingleOrDefault(h => h.ProductReviewId == productReview.Id && h.CustomerId == customer.Id);
+
+            if (prh is null)
+            {
+                //insert new helpfulness
+                prh = new ProductReviewHelpfulness
+                {
+                    ProductReviewId = productReview.Id,
+                    CustomerId = customer.Id,
+                    WasHelpful = helpfulness,
+                };
+
+                await InsertProductReviewHelpfulnessAsync(prh);
+            }
+            else
+            {
+                //existing one
+                prh.WasHelpful = helpfulness;
+
+                await _productReviewHelpfulnessRepository.UpdateAsync(prh);
+            }
+        }
+
+        /// <summary>
+        /// Updates a product review
+        /// </summary>
+        /// <param name="productReview">Product review</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateProductReviewAsync(ProductReview productReview)
+        {
+            await _productReviewRepository.UpdateAsync(productReview);
+        }
+
+        /// <summary>
+        /// Updates a totals helpfulness count for product review
+        /// </summary>
+        /// <param name="productReview">Product review</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the result
+        /// </returns>
+        public virtual async Task UpdateProductReviewHelpfulnessTotalsAsync(ProductReview productReview)
+        {
+            if (productReview is null)
+                throw new ArgumentNullException(nameof(productReview));
+
+            (productReview.HelpfulYesTotal, productReview.HelpfulNoTotal) = await GetHelpfulnessCountsAsync(productReview);
+
+            await _productReviewRepository.UpdateAsync(productReview);
+        }
+
+        /// <summary>
+        /// Check possibility added review for current customer
+        /// </summary>
+        /// <param name="productId">Current product</param>
+        /// <param name="storeId">The store identifier; pass 0 to load all records</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the 
+        /// </returns>
+        public virtual async Task<bool> CanAddReviewAsync(int productId, int storeId = 0)
+        {
+            var customer = await _workContext.GetCurrentCustomerAsync();
+
+            if (_catalogSettings.OneReviewPerProductFromCustomer)
+                return (await GetAllProductReviewsAsync(customerId: customer.Id, productId: productId, storeId: storeId)).TotalCount == 0;
+
+            return true;
         }
 
         #endregion
 
-        #region Product warehouse inventory
+        #region Product warehouses
 
         /// <summary>
-        /// Deletes a ProductWarehouseInventory
+        /// Get a product warehouse-inventory records by product identifier
         /// </summary>
-        /// <param name="pwi">ProductWarehouseInventory</param>
-        public virtual void DeleteProductWarehouseInventory(ProductWarehouseInventory pwi)
+        /// <param name="productId">Product identifier</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task<IList<ProductWarehouseInventory>> GetAllProductWarehouseInventoryRecordsAsync(int productId)
         {
-            if (pwi == null)
-                throw new ArgumentNullException("pwi");
+            return await _productWarehouseInventoryRepository.GetAllAsync(query => query.Where(pwi => pwi.ProductId == productId));
+        }
 
-            _productWarehouseInventoryRepository.Delete(pwi);
+        /// <summary>
+        /// Gets a warehouse by identifier
+        /// </summary>
+        /// <param name="warehouseId">Warehouse identifier</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the result
+        /// </returns>
+        public virtual async Task<Warehouse> GetWarehouseByIdAsync(int warehouseId)
+        {
+            return await _warehouseRepository.GetByIdAsync(warehouseId, cache => default);
+        }
 
-            _cacheManager.RemoveByPattern(PRODUCTS_PATTERN_KEY);
+        /// <summary>
+        /// Deletes a record to manage product inventory per warehouse
+        /// </summary>
+        /// <param name="pwi">Record to manage product inventory per warehouse</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteProductWarehouseInventoryAsync(ProductWarehouseInventory pwi)
+        {
+            await _productWarehouseInventoryRepository.DeleteAsync(pwi);
+        }
+
+        /// <summary>
+        /// Inserts a record to manage product inventory per warehouse
+        /// </summary>
+        /// <param name="pwi">Record to manage product inventory per warehouse</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task InsertProductWarehouseInventoryAsync(ProductWarehouseInventory pwi)
+        {
+            await _productWarehouseInventoryRepository.InsertAsync(pwi);
+        }
+
+        /// <summary>
+        /// Updates a record to manage product inventory per warehouse
+        /// </summary>
+        /// <param name="pwi">Record to manage product inventory per warehouse</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateProductWarehouseInventoryAsync(ProductWarehouseInventory pwi)
+        {
+            await _productWarehouseInventoryRepository.UpdateAsync(pwi);
+        }
+
+        /// <summary>
+        /// Updates a records to manage product inventory per warehouse
+        /// </summary>
+        /// <param name="pwis">Records to manage product inventory per warehouse</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateProductWarehouseInventoryAsync(IList<ProductWarehouseInventory> pwis)
+        {
+            await _productWarehouseInventoryRepository.UpdateAsync(pwis);
+        }
+
+        #endregion
+
+        #region Stock quantity history
+
+        /// <summary>
+        /// Add stock quantity change entry
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <param name="quantityAdjustment">Quantity adjustment</param>
+        /// <param name="stockQuantity">Current stock quantity</param>
+        /// <param name="warehouseId">Warehouse identifier</param>
+        /// <param name="message">Message</param>
+        /// <param name="combinationId">Product attribute combination identifier</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task AddStockQuantityHistoryEntryAsync(Product product, int quantityAdjustment, int stockQuantity,
+            int warehouseId = 0, string message = "", int? combinationId = null)
+        {
+            if (product == null)
+                throw new ArgumentNullException(nameof(product));
+
+            if (quantityAdjustment == 0)
+                return;
+
+            var historyEntry = new StockQuantityHistory
+            {
+                ProductId = product.Id,
+                CombinationId = combinationId,
+                WarehouseId = warehouseId > 0 ? (int?)warehouseId : null,
+                QuantityAdjustment = quantityAdjustment,
+                StockQuantity = stockQuantity,
+                Message = message,
+                CreatedOnUtc = DateTime.UtcNow
+            };
+
+            await _stockQuantityHistoryRepository.InsertAsync(historyEntry);
+        }
+
+        /// <summary>
+        /// Get the history of the product stock quantity changes
+        /// </summary>
+        /// <param name="product">Product</param>
+        /// <param name="warehouseId">Warehouse identifier; pass 0 to load all entries</param>
+        /// <param name="combinationId">Product attribute combination identifier; pass 0 to load all entries</param>
+        /// <param name="pageIndex">Page index</param>
+        /// <param name="pageSize">Page size</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the list of stock quantity change entries
+        /// </returns>
+        public virtual async Task<IPagedList<StockQuantityHistory>> GetStockQuantityHistoryAsync(Product product, int warehouseId = 0, int combinationId = 0,
+            int pageIndex = 0, int pageSize = int.MaxValue)
+        {
+            if (product == null)
+                throw new ArgumentNullException(nameof(product));
+
+            var query = _stockQuantityHistoryRepository.Table.Where(historyEntry => historyEntry.ProductId == product.Id);
+
+            if (warehouseId > 0)
+                query = query.Where(historyEntry => historyEntry.WarehouseId == warehouseId);
+
+            if (combinationId > 0)
+                query = query.Where(historyEntry => historyEntry.CombinationId == combinationId);
+
+            query = query.OrderByDescending(historyEntry => historyEntry.CreatedOnUtc).ThenByDescending(historyEntry => historyEntry.Id);
+
+            return await query.ToPagedListAsync(pageIndex, pageSize);
+        }
+
+        #endregion
+
+        #region Product discounts
+
+        /// <summary>
+        /// Clean up product references for a specified discount
+        /// </summary>
+        /// <param name="discount">Discount</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task ClearDiscountProductMappingAsync(Discount discount)
+        {
+            if (discount is null)
+                throw new ArgumentNullException(nameof(discount));
+
+            var mappingsWithProducts =
+                from dcm in _discountProductMappingRepository.Table
+                join p in _productRepository.Table on dcm.EntityId equals p.Id
+                where dcm.DiscountId == discount.Id
+                select new { product = p, dcm };
+
+            foreach (var pdcm in await mappingsWithProducts.ToListAsync())
+            {
+                await _discountProductMappingRepository.DeleteAsync(pdcm.dcm);
+
+                //update "HasDiscountsApplied" property
+                await UpdateHasDiscountsAppliedAsync(pdcm.product);
+            }
+        }
+
+        /// <summary>
+        /// Get a discount-product mapping records by product identifier
+        /// </summary>
+        /// <param name="productId">Product identifier</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task<IList<DiscountProductMapping>> GetAllDiscountsAppliedToProductAsync(int productId)
+        {
+            return await _discountProductMappingRepository.GetAllAsync(query => query.Where(dcm => dcm.EntityId == productId));
+        }
+
+        /// <summary>
+        /// Get a discount-product mapping record
+        /// </summary>
+        /// <param name="productId">Product identifier</param>
+        /// <param name="discountId">Discount identifier</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the result
+        /// </returns>
+        public virtual async Task<DiscountProductMapping> GetDiscountAppliedToProductAsync(int productId, int discountId)
+        {
+            return await _discountProductMappingRepository.Table
+                .FirstOrDefaultAsync(dcm => dcm.EntityId == productId && dcm.DiscountId == discountId);
+        }
+
+        /// <summary>
+        /// Inserts a discount-product mapping record
+        /// </summary>
+        /// <param name="discountProductMapping">Discount-product mapping</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task InsertDiscountProductMappingAsync(DiscountProductMapping discountProductMapping)
+        {
+            await _discountProductMappingRepository.InsertAsync(discountProductMapping);
+        }
+
+        /// <summary>
+        /// Deletes a discount-product mapping record
+        /// </summary>
+        /// <param name="discountProductMapping">Discount-product mapping</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteDiscountProductMappingAsync(DiscountProductMapping discountProductMapping)
+        {
+            await _discountProductMappingRepository.DeleteAsync(discountProductMapping);
         }
 
         #endregion

@@ -1,36 +1,40 @@
-using System;
-using System.Linq;
+﻿using System.Linq;
+using FluentValidation;
 using FluentValidation.Validators;
 
 namespace Nop.Web.Framework.Validators
 {
-    public class CreditCardPropertyValidator : PropertyValidator
+    /// <summary>
+    /// Credit card validator
+    /// </summary>
+    public class CreditCardPropertyValidator<T, TProperty> : PropertyValidator<T, TProperty>
     {
-        public CreditCardPropertyValidator()
-            : base("Credit card number is not valid")
-        {
+        public override string Name => "CreditCardPropertyValidator";
 
-        }
-
-        protected override bool IsValid(PropertyValidatorContext context)
+        /// <summary>
+        /// Is valid?
+        /// </summary>
+        /// <param name="context">Validation context</param>
+        /// <returns>Result</returns>
+        public override bool IsValid(ValidationContext<T> context, TProperty value)
         {
-            var ccValue = context.PropertyValue as string;
-            if (String.IsNullOrWhiteSpace(ccValue))
+            var ccValue = value as string;
+            if (string.IsNullOrWhiteSpace(ccValue))
                 return false;
 
             ccValue = ccValue.Replace(" ", "");
             ccValue = ccValue.Replace("-", "");
 
-            int checksum = 0;
-            bool evenDigit = false;
+            var checksum = 0;
+            var evenDigit = false;
 
             //http://www.beachnet.com/~hstiles/cardtype.html
-            foreach (char digit in ccValue.Reverse())
+            foreach (var digit in ccValue.Reverse())
             {
-                if (!Char.IsDigit(digit))
+                if (!char.IsDigit(digit))
                     return false;
 
-                int digitValue = (digit - '0') * (evenDigit ? 2 : 1);
+                var digitValue = (digit - '0') * (evenDigit ? 2 : 1);
                 evenDigit = !evenDigit;
 
                 while (digitValue > 0)
@@ -42,5 +46,7 @@ namespace Nop.Web.Framework.Validators
 
             return (checksum % 10) == 0;
         }
+
+        protected override string GetDefaultMessageTemplate(string errorCode) => "Credit card number is not valid";
     }
 }

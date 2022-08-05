@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using Nop.Core.Domain.Common;
 using Nop.Core.Domain.Localization;
 using Nop.Core.Domain.Seo;
 
@@ -7,10 +7,8 @@ namespace Nop.Core.Domain.Vendors
     /// <summary>
     /// Represents a vendor
     /// </summary>
-    public partial class Vendor : BaseEntity, ILocalizedEntity, ISlugSupported
+    public partial class Vendor : BaseEntity, ILocalizedEntity, ISlugSupported, ISoftDeletedEntity
     {
-        private ICollection<VendorNote> _vendorNotes;
-
         /// <summary>
         /// Gets or sets the name
         /// </summary>
@@ -32,6 +30,11 @@ namespace Nop.Core.Domain.Vendors
         public int PictureId { get; set; }
 
         /// <summary>
+        /// Gets or sets the address identifier
+        /// </summary>
+        public int AddressId { get; set; }
+
+        /// <summary>
         /// Gets or sets the admin comment
         /// </summary>
         public string AdminComment { get; set; }
@@ -50,8 +53,7 @@ namespace Nop.Core.Domain.Vendors
         /// Gets or sets the display order
         /// </summary>
         public int DisplayOrder { get; set; }
-
-
+        
         /// <summary>
         /// Gets or sets the meta keywords
         /// </summary>
@@ -83,13 +85,23 @@ namespace Nop.Core.Domain.Vendors
         public string PageSizeOptions { get; set; }
 
         /// <summary>
-        /// Gets or sets vendor notes
+        /// Gets or sets a value indicating whether the price range filtering is enabled
         /// </summary>
-        public virtual ICollection<VendorNote> VendorNotes
-        {
-            get { return _vendorNotes ?? (_vendorNotes = new List<VendorNote>()); }
-            protected set { _vendorNotes = value; }
-        }
+        public bool PriceRangeFiltering { get; set; }
 
+        /// <summary>
+        /// Gets or sets the "from" price
+        /// </summary>
+        public decimal PriceFrom { get; set; }
+
+        /// <summary>
+        /// Gets or sets the "to" price
+        /// </summary>
+        public decimal PriceTo { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the price range should be entered manually
+        /// </summary>
+        public bool ManuallyPriceRange { get; set; }
     }
 }

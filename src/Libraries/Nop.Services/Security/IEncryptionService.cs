@@ -1,6 +1,8 @@
-﻿
-namespace Nop.Services.Security 
+﻿namespace Nop.Services.Security
 {
+    /// <summary>
+    /// Encryption service
+    /// </summary>
     public interface IEncryptionService 
     {
         /// <summary>
@@ -13,12 +15,12 @@ namespace Nop.Services.Security
         /// <summary>
         /// Create a password hash
         /// </summary>
-        /// <param name="password">{assword</param>
-        /// <param name="saltkey">Salk key</param>
+        /// <param name="password">Password</param>
+        /// <param name="saltKey">Salk key</param>
         /// <param name="passwordFormat">Password format (hash algorithm)</param>
         /// <returns>Password hash</returns>
-        string CreatePasswordHash(string password, string saltkey, string passwordFormat = "SHA1");
-
+        string CreatePasswordHash(string password, string saltKey, string passwordFormat);
+        
         /// <summary>
         /// Encrypt text
         /// </summary>

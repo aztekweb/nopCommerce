@@ -1,51 +1,51 @@
 ﻿using System;
 using System.Linq;
-using System.Web;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Localization;
 using Nop.Core;
 using Nop.Core.Domain.Customers;
 using Nop.Core.Domain.Directory;
 using Nop.Core.Domain.Localization;
 using Nop.Core.Domain.Tax;
 using Nop.Core.Domain.Vendors;
-using Nop.Core.Fakes;
+using Nop.Core.Http;
+using Nop.Core.Security;
 using Nop.Services.Authentication;
 using Nop.Services.Common;
 using Nop.Services.Customers;
 using Nop.Services.Directory;
 using Nop.Services.Helpers;
 using Nop.Services.Localization;
+using Nop.Services.ScheduleTasks;
 using Nop.Services.Stores;
 using Nop.Services.Vendors;
-using Nop.Web.Framework.Localization;
+using Nop.Web.Framework.Globalization;
 
 namespace Nop.Web.Framework
 {
     /// <summary>
-    /// Work context for web application
+    /// Represents work context for web application
     /// </summary>
     public partial class WebWorkContext : IWorkContext
     {
-        #region Const
-
-        private const string CustomerCookieName = "Nop.customer";
-
-        #endregion
-
         #region Fields
 
-        private readonly HttpContextBase _httpContext;
-        private readonly ICustomerService _customerService;
-        private readonly IVendorService _vendorService;
-        private readonly IStoreContext _storeContext;
-        private readonly IAuthenticationService _authenticationService;
-        private readonly ILanguageService _languageService;
-        private readonly ICurrencyService _currencyService;
-        private readonly IGenericAttributeService _genericAttributeService;
-        private readonly TaxSettings _taxSettings;
+        private readonly CookieSettings _cookieSettings;
         private readonly CurrencySettings _currencySettings;
-        private readonly LocalizationSettings _localizationSettings;
-        private readonly IUserAgentHelper _userAgentHelper;
+        private readonly IAuthenticationService _authenticationService;
+        private readonly ICurrencyService _currencyService;
+        private readonly ICustomerService _customerService;
+        private readonly IGenericAttributeService _genericAttributeService;
+        private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly ILanguageService _languageService;
+        private readonly IStoreContext _storeContext;
         private readonly IStoreMappingService _storeMappingService;
+        private readonly IUserAgentHelper _userAgentHelper;
+        private readonly IVendorService _vendorService;
+        private readonly IWebHelper _webHelper;
+        private readonly LocalizationSettings _localizationSettings;
+        private readonly TaxSettings _taxSettings;
 
         private Customer _cachedCustomer;
         private Customer _originalCustomerIfImpersonated;
@@ -58,114 +58,136 @@ namespace Nop.Web.Framework
 
         #region Ctor
 
-        public WebWorkContext(HttpContextBase httpContext,
-            ICustomerService customerService,
-            IVendorService vendorService,
-            IStoreContext storeContext,
-            IAuthenticationService authenticationService,
-            ILanguageService languageService,
-            ICurrencyService currencyService,
-            IGenericAttributeService genericAttributeService,
-            TaxSettings taxSettings, 
+        public WebWorkContext(CookieSettings cookieSettings,
             CurrencySettings currencySettings,
-            LocalizationSettings localizationSettings,
+            IAuthenticationService authenticationService,
+            ICurrencyService currencyService,
+            ICustomerService customerService,
+            IGenericAttributeService genericAttributeService,
+            IHttpContextAccessor httpContextAccessor,
+            ILanguageService languageService,
+            IStoreContext storeContext,
+            IStoreMappingService storeMappingService,
             IUserAgentHelper userAgentHelper,
-            IStoreMappingService storeMappingService)
+            IVendorService vendorService,
+            IWebHelper webHelper,
+            LocalizationSettings localizationSettings,
+            TaxSettings taxSettings)
         {
-            this._httpContext = httpContext;
-            this._customerService = customerService;
-            this._vendorService = vendorService;
-            this._storeContext = storeContext;
-            this._authenticationService = authenticationService;
-            this._languageService = languageService;
-            this._currencyService = currencyService;
-            this._genericAttributeService = genericAttributeService;
-            this._taxSettings = taxSettings;
-            this._currencySettings = currencySettings;
-            this._localizationSettings = localizationSettings;
-            this._userAgentHelper = userAgentHelper;
-            this._storeMappingService = storeMappingService;
+            _cookieSettings = cookieSettings;
+            _currencySettings = currencySettings;
+            _authenticationService = authenticationService;
+            _currencyService = currencyService;
+            _customerService = customerService;
+            _genericAttributeService = genericAttributeService;
+            _httpContextAccessor = httpContextAccessor;
+            _languageService = languageService;
+            _storeContext = storeContext;
+            _storeMappingService = storeMappingService;
+            _userAgentHelper = userAgentHelper;
+            _vendorService = vendorService;
+            _webHelper = webHelper;
+            _localizationSettings = localizationSettings;
+            _taxSettings = taxSettings;
         }
 
         #endregion
 
         #region Utilities
 
-        protected virtual HttpCookie GetCustomerCookie()
+        /// <summary>
+        /// Get nop customer cookie
+        /// </summary>
+        /// <returns>String value of cookie</returns>
+        protected virtual string GetCustomerCookie()
         {
-            if (_httpContext == null || _httpContext.Request == null)
-                return null;
-
-            return _httpContext.Request.Cookies[CustomerCookieName];
+            var cookieName = $"{NopCookieDefaults.Prefix}{NopCookieDefaults.CustomerCookie}";
+            return _httpContextAccessor.HttpContext?.Request?.Cookies[cookieName];
         }
 
+        /// <summary>
+        /// Set nop customer cookie
+        /// </summary>
+        /// <param name="customerGuid">Guid of the customer</param>
         protected virtual void SetCustomerCookie(Guid customerGuid)
         {
-            if (_httpContext != null && _httpContext.Response != null)
-            {
-                var cookie = new HttpCookie(CustomerCookieName);
-                cookie.HttpOnly = true;
-                cookie.Value = customerGuid.ToString();
-                if (customerGuid == Guid.Empty)
-                {
-                    cookie.Expires = DateTime.Now.AddMonths(-1);
-                }
-                else
-                {
-                    int cookieExpires = 24*365; //TODO make configurable
-                    cookie.Expires = DateTime.Now.AddHours(cookieExpires);
-                }
+            if (_httpContextAccessor.HttpContext?.Response?.HasStarted ?? true)
+                return;
 
-                _httpContext.Response.Cookies.Remove(CustomerCookieName);
-                _httpContext.Response.Cookies.Add(cookie);
-            }
+            //delete current cookie value
+            var cookieName = $"{NopCookieDefaults.Prefix}{NopCookieDefaults.CustomerCookie}";
+            _httpContextAccessor.HttpContext.Response.Cookies.Delete(cookieName);
+
+            //get date of cookie expiration
+            var cookieExpires = _cookieSettings.CustomerCookieExpires;
+            var cookieExpiresDate = DateTime.Now.AddHours(cookieExpires);
+
+            //if passed guid is empty set cookie as expired
+            if (customerGuid == Guid.Empty)
+                cookieExpiresDate = DateTime.Now.AddMonths(-1);
+
+            //set new cookie value
+            var options = new CookieOptions
+            {
+                HttpOnly = true,
+                Expires = cookieExpiresDate,
+                Secure = _webHelper.IsCurrentConnectionSecured()
+            };
+            _httpContextAccessor.HttpContext.Response.Cookies.Append(cookieName, customerGuid.ToString(), options);
         }
 
-        protected virtual Language GetLanguageFromUrl()
+        /// <summary>
+        /// Set language culture cookie
+        /// </summary>
+        /// <param name="language">Language</param>
+        protected virtual void SetLanguageCookie(Language language)
         {
-            if (_httpContext == null || _httpContext.Request == null)
-                return null;
+            if (_httpContextAccessor.HttpContext?.Response?.HasStarted ?? true)
+                return;
 
-            string virtualPath = _httpContext.Request.AppRelativeCurrentExecutionFilePath;
-            string applicationPath = _httpContext.Request.ApplicationPath;
-            if (!virtualPath.IsLocalizedUrl(applicationPath, false))
-                return null;
+            //delete current cookie value
+            var cookieName = $"{NopCookieDefaults.Prefix}{NopCookieDefaults.CultureCookie}";
+            _httpContextAccessor.HttpContext.Response.Cookies.Delete(cookieName);
 
-            var seoCode = virtualPath.GetLanguageSeoCodeFromUrl(applicationPath, false);
-            if (String.IsNullOrEmpty(seoCode))
-                return null;
+            if (string.IsNullOrEmpty(language?.LanguageCulture))
+                return;
 
-            var language = _languageService
-                .GetAllLanguages()
-                .FirstOrDefault(l => seoCode.Equals(l.UniqueSeoCode, StringComparison.InvariantCultureIgnoreCase));
-            if (language != null && language.Published && _storeMappingService.Authorize(language))
-            {
-                return language;
-            }
-
-            return null;
+            //set new cookie value
+            var value = CookieRequestCultureProvider.MakeCookieValue(new RequestCulture(language.LanguageCulture));
+            var options = new CookieOptions { Expires = DateTimeOffset.UtcNow.AddYears(1) };
+            _httpContextAccessor.HttpContext.Response.Cookies.Append(cookieName, value, options);
         }
 
-        protected virtual Language GetLanguageFromBrowserSettings()
+        /// <summary>
+        /// Get language from the request
+        /// </summary>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the found language
+        /// </returns>
+        protected virtual async Task<Language> GetLanguageFromRequestAsync()
         {
-            if (_httpContext == null ||
-                _httpContext.Request == null ||
-                _httpContext.Request.UserLanguages == null)
+            var requestCultureFeature = _httpContextAccessor.HttpContext?.Features.Get<IRequestCultureFeature>();
+            if (requestCultureFeature is null)
                 return null;
 
-            var userLanguage = _httpContext.Request.UserLanguages.FirstOrDefault();
-            if (String.IsNullOrEmpty(userLanguage))
+            //whether we should detect the current language by customer settings
+            if (requestCultureFeature.Provider is not NopSeoUrlCultureProvider && !_localizationSettings.AutomaticallyDetectLanguage)
                 return null;
 
-            var language = _languageService
-                .GetAllLanguages()
-                .FirstOrDefault(l => userLanguage.Equals(l.LanguageCulture, StringComparison.InvariantCultureIgnoreCase));
-            if (language != null && language.Published && _storeMappingService.Authorize(language))
-            {
-                return language;
-            }
+            //get request culture
+            if (requestCultureFeature.RequestCulture is null)
+                return null;
 
-            return null;
+            //try to get language by culture name
+            var requestLanguage = (await _languageService.GetAllLanguagesAsync()).FirstOrDefault(language =>
+                language.LanguageCulture.Equals(requestCultureFeature.RequestCulture.Culture.Name, StringComparison.InvariantCultureIgnoreCase));
+
+            //check language availability
+            if (requestLanguage == null || !requestLanguage.Published || !await _storeMappingService.AuthorizeAsync(requestLanguage))
+                return null;
+
+            return requestLanguage;
         }
 
         #endregion
@@ -173,46 +195,62 @@ namespace Nop.Web.Framework
         #region Properties
 
         /// <summary>
-        /// Gets or sets the current customer
+        /// Gets the current customer
         /// </summary>
-        public virtual Customer CurrentCustomer
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task<Customer> GetCurrentCustomerAsync()
         {
-            get
+            //whether there is a cached value
+            if (_cachedCustomer != null)
+                return _cachedCustomer;
+
+            await SetCurrentCustomerAsync();
+
+            return _cachedCustomer;
+        }
+
+        /// <summary>
+        /// Sets the current customer
+        /// </summary>
+        /// <param name="customer">Current customer</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task SetCurrentCustomerAsync(Customer customer = null)
+        {
+            if (customer == null)
             {
-                if (_cachedCustomer != null)
-                    return _cachedCustomer;
-
-                Customer customer = null;
-                if (_httpContext == null || _httpContext is FakeHttpContext)
+                //check whether request is made by a background (schedule) task
+                if (_httpContextAccessor.HttpContext?.Request
+                    ?.Path.Equals(new PathString($"/{NopTaskDefaults.ScheduleTaskPath}"), StringComparison.InvariantCultureIgnoreCase)
+                    ?? true)
                 {
-                    //check whether request is made by a background task
                     //in this case return built-in customer record for background task
-                    customer = _customerService.GetCustomerBySystemName(SystemCustomerNames.BackgroundTask);
+                    customer = await _customerService.GetOrCreateBackgroundTaskUserAsync();
                 }
 
-                //check whether request is made by a search engine
-                //in this case return built-in customer record for search engines 
-                //or comment the following two lines of code in order to disable this functionality
-                if (customer == null || customer.Deleted || !customer.Active)
+                if (customer == null || customer.Deleted || !customer.Active || customer.RequireReLogin)
                 {
+                    //check whether request is made by a search engine, in this case return built-in customer record for search engines
                     if (_userAgentHelper.IsSearchEngine())
-                        customer = _customerService.GetCustomerBySystemName(SystemCustomerNames.SearchEngine);
+                        customer = await _customerService.GetOrCreateSearchEngineUserAsync();
                 }
 
-                //registered user
-                if (customer == null || customer.Deleted || !customer.Active)
+                if (customer == null || customer.Deleted || !customer.Active || customer.RequireReLogin)
                 {
-                    customer = _authenticationService.GetAuthenticatedCustomer();
+                    //try to get registered user
+                    customer = await _authenticationService.GetAuthenticatedCustomerAsync();
                 }
 
-                //impersonate user if required (currently used for 'phone order' support)
-                if (customer != null && !customer.Deleted && customer.Active)
+                if (customer != null && !customer.Deleted && customer.Active && !customer.RequireReLogin)
                 {
-                    var impersonatedCustomerId = customer.GetAttribute<int?>(SystemCustomerAttributeNames.ImpersonatedCustomerId);
+                    //get impersonate user if required
+                    var impersonatedCustomerId = await _genericAttributeService
+                        .GetAttributeAsync<int?>(customer, NopCustomerDefaults.ImpersonatedCustomerIdAttribute);
                     if (impersonatedCustomerId.HasValue && impersonatedCustomerId.Value > 0)
                     {
-                        var impersonatedCustomer = _customerService.GetCustomerById(impersonatedCustomerId.Value);
-                        if (impersonatedCustomer != null && !impersonatedCustomer.Deleted && impersonatedCustomer.Active)
+                        var impersonatedCustomer = await _customerService.GetCustomerByIdAsync(impersonatedCustomerId.Value);
+                        if (impersonatedCustomer != null && !impersonatedCustomer.Deleted &&
+                            impersonatedCustomer.Active &&
+                            !impersonatedCustomer.RequireReLogin)
                         {
                             //set impersonated customer
                             _originalCustomerIfImpersonated = customer;
@@ -221,268 +259,280 @@ namespace Nop.Web.Framework
                     }
                 }
 
-                //load guest customer
-                if (customer == null || customer.Deleted || !customer.Active)
+                if (customer == null || customer.Deleted || !customer.Active || customer.RequireReLogin)
                 {
+                    //get guest customer
                     var customerCookie = GetCustomerCookie();
-                    if (customerCookie != null && !String.IsNullOrEmpty(customerCookie.Value))
+                    if (Guid.TryParse(customerCookie, out var customerGuid))
                     {
-                        Guid customerGuid;
-                        if (Guid.TryParse(customerCookie.Value, out customerGuid))
-                        {
-                            var customerByCookie = _customerService.GetCustomerByGuid(customerGuid);
-                            if (customerByCookie != null &&
-                                //this customer (from cookie) should not be registered
-                                !customerByCookie.IsRegistered())
-                                customer = customerByCookie;
-                        }
+                        //get customer from cookie (should not be registered)
+                        var customerByCookie = await _customerService.GetCustomerByGuidAsync(customerGuid);
+                        if (customerByCookie != null && !await _customerService.IsRegisteredAsync(customerByCookie))
+                            customer = customerByCookie;
                     }
                 }
 
-                //create guest if not exists
-                if (customer == null || customer.Deleted || !customer.Active)
+                if (customer == null || customer.Deleted || !customer.Active || customer.RequireReLogin)
                 {
-                    customer = _customerService.InsertGuestCustomer();
+                    //create guest if not exists
+                    customer = await _customerService.InsertGuestCustomerAsync();
                 }
-
-
-                //validation
-                if (!customer.Deleted && customer.Active)
-                {
-                    SetCustomerCookie(customer.CustomerGuid);
-                    _cachedCustomer = customer;
-                }
-
-                return _cachedCustomer;
             }
-            set
+
+            if (!customer.Deleted && customer.Active && !customer.RequireReLogin)
             {
-                SetCustomerCookie(value.CustomerGuid);
-                _cachedCustomer = value;
+                //set customer cookie
+                SetCustomerCookie(customer.CustomerGuid);
+
+                //cache the found customer
+                _cachedCustomer = customer;
             }
         }
 
         /// <summary>
-        /// Gets or sets the original customer (in case the current one is impersonated)
+        /// Gets the original customer (in case the current one is impersonated)
         /// </summary>
-        public virtual Customer OriginalCustomerIfImpersonated
-        {
-            get
-            {
-                return _originalCustomerIfImpersonated;
-            }
-        }
+        public virtual Customer OriginalCustomerIfImpersonated => _originalCustomerIfImpersonated;
 
         /// <summary>
-        /// Gets or sets the current vendor (logged-in manager)
+        /// Gets the current vendor (logged-in manager)
         /// </summary>
-        public virtual Vendor CurrentVendor
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task<Vendor> GetCurrentVendorAsync()
         {
-            get
-            {
-                if (_cachedVendor != null)
-                    return _cachedVendor;
-
-                var currentCustomer = this.CurrentCustomer;
-                if (currentCustomer == null)
-                    return null;
-
-                var vendor = _vendorService.GetVendorById(currentCustomer.VendorId);
-
-                //validation
-                if (vendor != null && !vendor.Deleted && vendor.Active)
-                    _cachedVendor = vendor;
-
+            //whether there is a cached value
+            if (_cachedVendor != null)
                 return _cachedVendor;
-            }
+
+            var customer = await GetCurrentCustomerAsync();
+            if (customer == null)
+                return null;
+
+            //check vendor availability
+            var vendor = await _vendorService.GetVendorByIdAsync(customer.VendorId);
+            if (vendor == null || vendor.Deleted || !vendor.Active)
+                return null;
+
+            //cache the found vendor
+            _cachedVendor = vendor;
+
+            return _cachedVendor;
         }
 
         /// <summary>
-        /// Get or set current user working language
+        /// Sets current user working language
         /// </summary>
-        public virtual Language WorkingLanguage
+        /// <param name="language">Language</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task SetWorkingLanguageAsync(Language language)
         {
-            get
-            {
-                if (_cachedLanguage != null)
-                    return _cachedLanguage;
-                
-                Language detectedLanguage = null;
-                if (_localizationSettings.SeoFriendlyUrlsForLanguagesEnabled)
-                {
-                    //get language from URL
-                    detectedLanguage = GetLanguageFromUrl();
-                }
-                if (detectedLanguage == null && _localizationSettings.AutomaticallyDetectLanguage)
-                {
-                    //get language from browser settings
-                    //but we do it only once
-                    if (!this.CurrentCustomer.GetAttribute<bool>(SystemCustomerAttributeNames.LanguageAutomaticallyDetected, 
-                        _genericAttributeService, _storeContext.CurrentStore.Id))
-                    {
-                        detectedLanguage = GetLanguageFromBrowserSettings();
-                        if (detectedLanguage != null)
-                        {
-                            _genericAttributeService.SaveAttribute(this.CurrentCustomer, SystemCustomerAttributeNames.LanguageAutomaticallyDetected,
-                                 true, _storeContext.CurrentStore.Id);
-                        }
-                    }
-                }
-                if (detectedLanguage != null)
-                {
-                    //the language is detected. now we need to save it
-                    if (this.CurrentCustomer.GetAttribute<int>(SystemCustomerAttributeNames.LanguageId,
-                        _genericAttributeService, _storeContext.CurrentStore.Id) != detectedLanguage.Id)
-                    {
-                        _genericAttributeService.SaveAttribute(this.CurrentCustomer, SystemCustomerAttributeNames.LanguageId,
-                            detectedLanguage.Id, _storeContext.CurrentStore.Id);
-                    }
-                }
+            //save passed language identifier
+            var customer = await GetCurrentCustomerAsync();
+            customer.LanguageId = language?.Id;
+            await _customerService.UpdateCustomerAsync(customer);
 
-                var allLanguages = _languageService.GetAllLanguages(storeId: _storeContext.CurrentStore.Id);
-                //find current customer language
-                var languageId = this.CurrentCustomer.GetAttribute<int>(SystemCustomerAttributeNames.LanguageId,
-                    _genericAttributeService, _storeContext.CurrentStore.Id);
-                var language = allLanguages.FirstOrDefault(x => x.Id == languageId);
-                if (language == null)
-                {
-                    //it not found, then let's load the default currency for the current language (if specified)
-                    languageId = _storeContext.CurrentStore.DefaultLanguageId;
-                    language = allLanguages.FirstOrDefault(x => x.Id == languageId);
-                }
-                if (language == null)
-                {
-                    //it not specified, then return the first (filtered by current store) found one
-                    language = allLanguages.FirstOrDefault();
-                }
-                if (language == null)
-                {
-                    //it not specified, then return the first found one
-                    language = _languageService.GetAllLanguages().FirstOrDefault();
-                }
+            //set cookie
+            SetLanguageCookie(language);
 
-                //cache
-                _cachedLanguage = language;
+            //then reset the cached value
+            _cachedLanguage = null;
+        }
+
+        /// <summary>
+        /// Gets current user working language
+        /// </summary>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task<Language> GetWorkingLanguageAsync()
+        {
+            //whether there is a cached value
+            if (_cachedLanguage != null)
                 return _cachedLanguage;
-            }
-            set
-            {
-                var languageId = value != null ? value.Id : 0;
-                _genericAttributeService.SaveAttribute(this.CurrentCustomer,
-                    SystemCustomerAttributeNames.LanguageId,
-                    languageId, _storeContext.CurrentStore.Id);
 
-                //reset cache
-                _cachedLanguage = null;
+            var customer = await GetCurrentCustomerAsync();
+            var store = await _storeContext.GetCurrentStoreAsync();
+
+            //whether we should detect the language from the request
+            var detectedLanguage = await GetLanguageFromRequestAsync();
+
+            //get current saved language identifier
+            var currentLanguageId = customer.LanguageId;
+
+            //if the language is detected we need to save it
+            if (detectedLanguage != null)
+            {
+                //save the detected language identifier if it differs from the current one
+                if (detectedLanguage.Id != currentLanguageId)
+                    await SetWorkingLanguageAsync(detectedLanguage);
             }
+            else
+            {
+                var allStoreLanguages = await _languageService.GetAllLanguagesAsync(storeId: store.Id);
+
+                //check customer language availability
+                detectedLanguage = allStoreLanguages.FirstOrDefault(language => language.Id == currentLanguageId);
+
+                //it not found, then try to get the default language for the current store (if specified)
+                detectedLanguage ??= allStoreLanguages.FirstOrDefault(language => language.Id == store.DefaultLanguageId);
+
+                //if the default language for the current store not found, then try to get the first one
+                detectedLanguage ??= allStoreLanguages.FirstOrDefault();
+
+                //if there are no languages for the current store try to get the first one regardless of the store
+                detectedLanguage ??= (await _languageService.GetAllLanguagesAsync()).FirstOrDefault();
+
+                SetLanguageCookie(detectedLanguage);
+            }
+
+            //cache the found language
+            _cachedLanguage = detectedLanguage;
+
+            return _cachedLanguage;
         }
 
         /// <summary>
-        /// Get or set current user working currency
+        /// Gets current user working currency
         /// </summary>
-        public virtual Currency WorkingCurrency
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task<Currency> GetWorkingCurrencyAsync()
         {
-            get
+            //whether there is a cached value
+            if (_cachedCurrency != null)
+                return _cachedCurrency;
+
+            var adminAreaUrl = $"{_webHelper.GetStoreLocation()}admin";
+
+            //return primary store currency when we're in admin area/mode
+            if (_webHelper.GetThisPageUrl(false).StartsWith(adminAreaUrl, StringComparison.InvariantCultureIgnoreCase))
             {
-                if (_cachedCurrency != null)
-                    return _cachedCurrency;
-                
-                //return primary store currency when we're in admin area/mode
-                if (this.IsAdmin)
+                var primaryStoreCurrency = await _currencyService.GetCurrencyByIdAsync(_currencySettings.PrimaryStoreCurrencyId);
+                if (primaryStoreCurrency != null)
                 {
-                    var primaryStoreCurrency =  _currencyService.GetCurrencyById(_currencySettings.PrimaryStoreCurrencyId);
-                    if (primaryStoreCurrency != null)
-                    {
-                        //cache
-                        _cachedCurrency = primaryStoreCurrency;
-                        return primaryStoreCurrency;
-                    }
+                    _cachedCurrency = primaryStoreCurrency;
+                    return primaryStoreCurrency;
                 }
+            }
 
-                var allCurrencies = _currencyService.GetAllCurrencies(storeId: _storeContext.CurrentStore.Id);
-                //find a currency previously selected by a customer
-                var currencyId = this.CurrentCustomer.GetAttribute<int>(SystemCustomerAttributeNames.CurrencyId,
-                    _genericAttributeService, _storeContext.CurrentStore.Id);
-                var currency = allCurrencies.FirstOrDefault(x => x.Id == currencyId);
-                if (currency == null)
-                {
-                    //it not found, then let's load the default currency for the current language (if specified)
-                    currencyId = this.WorkingLanguage.DefaultCurrencyId;
-                    currency = allCurrencies.FirstOrDefault(x => x.Id == currencyId);
-                }
-                if (currency == null)
-                {
-                    //it not found, then return the first (filtered by current store) found one
-                    currency = allCurrencies.FirstOrDefault();
-                }
-                if (currency == null)
-                {
-                    //it not specified, then return the first found one
-                    currency = _currencyService.GetAllCurrencies().FirstOrDefault();
-                }
+            var customer = await GetCurrentCustomerAsync();
+            var store = await _storeContext.GetCurrentStoreAsync();
 
-                //cache
-                _cachedCurrency = currency;
+            if (customer.IsSearchEngineAccount())
+            {
+                _cachedCurrency = await _currencyService.GetCurrencyByIdAsync(_currencySettings.PrimaryStoreCurrencyId)
+                    ?? (await _currencyService.GetAllCurrenciesAsync(storeId: store.Id)).FirstOrDefault();
+
                 return _cachedCurrency;
             }
-            set
-            {
-                var currencyId = value != null ? value.Id : 0;
-                _genericAttributeService.SaveAttribute(this.CurrentCustomer,
-                    SystemCustomerAttributeNames.CurrencyId,
-                    currencyId, _storeContext.CurrentStore.Id);
 
-                //reset cache
-                _cachedCurrency = null;
+            var allStoreCurrencies = await _currencyService.GetAllCurrenciesAsync(storeId: store.Id);
+
+            //check customer currency availability
+            var customerCurrency = allStoreCurrencies.FirstOrDefault(currency => currency.Id == customer.CurrencyId);
+            if (customerCurrency == null)
+            {
+                //it not found, then try to get the default currency for the current language (if specified)
+                var language = await GetWorkingLanguageAsync();
+                customerCurrency = allStoreCurrencies
+                    .FirstOrDefault(currency => currency.Id == language.DefaultCurrencyId);
             }
+
+            //if the default currency for the current store not found, then try to get the first one
+            if (customerCurrency == null)
+                customerCurrency = allStoreCurrencies.FirstOrDefault();
+
+            //if there are no currencies for the current store try to get the first one regardless of the store
+            if (customerCurrency == null)
+                customerCurrency = (await _currencyService.GetAllCurrenciesAsync()).FirstOrDefault();
+
+            //cache the found currency
+            _cachedCurrency = customerCurrency;
+
+            return _cachedCurrency;
         }
 
         /// <summary>
-        /// Get or set current tax display type
+        /// Sets current user working currency
         /// </summary>
-        public virtual TaxDisplayType TaxDisplayType
+        /// <param name="currency">Currency</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task SetWorkingCurrencyAsync(Currency currency)
         {
-            get
-            {
-                //cache
-                if (_cachedTaxDisplayType != null)
-                    return _cachedTaxDisplayType.Value;
+            //save passed currency identifier
+            var customer = await GetCurrentCustomerAsync();
+            if (customer.IsSearchEngineAccount())
+                return;
 
-                TaxDisplayType taxDisplayType;
-                if (_taxSettings.AllowCustomersToSelectTaxDisplayType && this.CurrentCustomer != null)
-                {
-                    taxDisplayType = (TaxDisplayType) this.CurrentCustomer.GetAttribute<int>(
-                        SystemCustomerAttributeNames.TaxDisplayTypeId,
-                        _genericAttributeService,
-                        _storeContext.CurrentStore.Id);
-                }
-                else
-                {
-                    taxDisplayType = _taxSettings.TaxDisplayType;
-                }
+            customer.CurrencyId = currency?.Id;
+            await _customerService.UpdateCustomerAsync(customer);
 
-                //cache
-                _cachedTaxDisplayType = taxDisplayType;
+            //then reset the cached value
+            _cachedCurrency = null;
+        }
+
+        /// <summary>
+        /// Gets or sets current tax display type
+        /// </summary>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task<TaxDisplayType> GetTaxDisplayTypeAsync()
+        {
+            //whether there is a cached value
+            if (_cachedTaxDisplayType.HasValue)
                 return _cachedTaxDisplayType.Value;
 
-            }
-            set
+            var taxDisplayType = TaxDisplayType.IncludingTax;
+            var customer = await GetCurrentCustomerAsync();
+
+            //whether customers are allowed to select tax display type
+            if (_taxSettings.AllowCustomersToSelectTaxDisplayType && customer != null)
             {
-                if (!_taxSettings.AllowCustomersToSelectTaxDisplayType)
-                    return;
-
-                _genericAttributeService.SaveAttribute(this.CurrentCustomer, 
-                    SystemCustomerAttributeNames.TaxDisplayTypeId,
-                    (int)value, _storeContext.CurrentStore.Id);
-
-                //reset cache
-                _cachedTaxDisplayType = null;
-
+                //try to get previously saved tax display type
+                var taxDisplayTypeId = customer.TaxDisplayTypeId;
+                if (taxDisplayTypeId.HasValue)
+                    taxDisplayType = (TaxDisplayType)taxDisplayTypeId.Value;
+                else
+                {
+                    //default tax type by customer roles
+                    var defaultRoleTaxDisplayType = await _customerService.GetCustomerDefaultTaxDisplayTypeAsync(customer);
+                    if (defaultRoleTaxDisplayType != null)
+                        taxDisplayType = defaultRoleTaxDisplayType.Value;
+                }
             }
+            else
+            {
+                //default tax type by customer roles
+                var defaultRoleTaxDisplayType = await _customerService.GetCustomerDefaultTaxDisplayTypeAsync(customer);
+                if (defaultRoleTaxDisplayType != null)
+                    taxDisplayType = defaultRoleTaxDisplayType.Value;
+                else
+                {
+                    //or get the default tax display type
+                    taxDisplayType = _taxSettings.TaxDisplayType;
+                }
+            }
+
+            //cache the value
+            _cachedTaxDisplayType = taxDisplayType;
+
+            return _cachedTaxDisplayType.Value;
+        }
+
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task SetTaxDisplayTypeAsync(TaxDisplayType taxDisplayType)
+        {
+            //whether customers are allowed to select tax display type
+            if (!_taxSettings.AllowCustomersToSelectTaxDisplayType)
+                return;
+
+            //save passed value
+            var customer = await GetCurrentCustomerAsync();
+            customer.TaxDisplayType = taxDisplayType;
+            await _customerService.UpdateCustomerAsync(customer);
+
+            //then reset the cached value
+            _cachedTaxDisplayType = null;
         }
 
         /// <summary>
-        /// Get or set value indicating whether we're in admin area
+        /// Gets or sets value indicating whether we're in admin area
         /// </summary>
         public virtual bool IsAdmin { get; set; }
 

@@ -1,29 +1,46 @@
 ﻿using System;
-using Nop.Services.Tasks;
+using Nop.Core.Domain.Customers;
+using Nop.Services.ScheduleTasks;
 
 namespace Nop.Services.Customers
 {
     /// <summary>
     /// Represents a task for deleting guest customers
     /// </summary>
-    public partial class DeleteGuestsTask : ITask
+    public partial class DeleteGuestsTask : IScheduleTask
     {
+        #region Fields
+
+        private readonly CustomerSettings _customerSettings;
         private readonly ICustomerService _customerService;
 
-        public DeleteGuestsTask(ICustomerService customerService)
+        #endregion
+
+        #region Ctor
+
+        public DeleteGuestsTask(CustomerSettings customerSettings,
+            ICustomerService customerService)
         {
-            this._customerService = customerService;
+            _customerSettings = customerSettings;
+            _customerService = customerService;
         }
+
+        #endregion
+
+        #region Methods
 
         /// <summary>
         /// Executes a task
         /// </summary>
-        public void Execute()
+        public async System.Threading.Tasks.Task ExecuteAsync()
         {
-            //60*24 = 1 day
-            var olderThanMinutes = 1440; //TODO move to settings
-            //Do not delete more than 1000 records per time. This way the system is not slowed down
-            _customerService.DeleteGuestCustomers(null, DateTime.UtcNow.AddMinutes(-olderThanMinutes), true);
+            var olderThanMinutes = _customerSettings.DeleteGuestTaskOlderThanMinutes;
+            // Default value in case 0 is returned.  0 would effectively disable this service and harm performance.
+            olderThanMinutes = olderThanMinutes == 0 ? 1440 : olderThanMinutes;
+
+            await _customerService.DeleteGuestCustomersAsync(null, DateTime.UtcNow.AddMinutes(-olderThanMinutes), true);
         }
+
+        #endregion
     }
 }

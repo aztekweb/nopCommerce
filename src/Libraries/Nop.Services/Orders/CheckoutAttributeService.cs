@@ -1,10 +1,10 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Nop.Core.Caching;
-using Nop.Core.Data;
 using Nop.Core.Domain.Orders;
-using Nop.Services.Events;
+using Nop.Data;
 using Nop.Services.Stores;
 
 namespace Nop.Services.Orders
@@ -14,78 +14,26 @@ namespace Nop.Services.Orders
     /// </summary>
     public partial class CheckoutAttributeService : ICheckoutAttributeService
     {
-        #region Constants
-
-        /// <summary>
-        /// Key for caching
-        /// </summary>
-        /// <remarks>
-        /// {0} : store ID
-        /// {1} : >A value indicating whether we should exlude shippable attributes
-        /// </remarks>
-        private const string CHECKOUTATTRIBUTES_ALL_KEY = "Nop.checkoutattribute.all-{0}-{1}";
-        /// <summary>
-        /// Key for caching
-        /// </summary>
-        /// <remarks>
-        /// {0} : checkout attribute ID
-        /// </remarks>
-        private const string CHECKOUTATTRIBUTES_BY_ID_KEY = "Nop.checkoutattribute.id-{0}";
-        /// <summary>
-        /// Key for caching
-        /// </summary>
-        /// <remarks>
-        /// {0} : checkout attribute ID
-        /// </remarks>
-        private const string CHECKOUTATTRIBUTEVALUES_ALL_KEY = "Nop.checkoutattributevalue.all-{0}";
-        /// <summary>
-        /// Key for caching
-        /// </summary>
-        /// <remarks>
-        /// {0} : checkout attribute value ID
-        /// </remarks>
-        private const string CHECKOUTATTRIBUTEVALUES_BY_ID_KEY = "Nop.checkoutattributevalue.id-{0}";
-        /// <summary>
-        /// Key pattern to clear cache
-        /// </summary>
-        private const string CHECKOUTATTRIBUTES_PATTERN_KEY = "Nop.checkoutattribute.";
-        /// <summary>
-        /// Key pattern to clear cache
-        /// </summary>
-        private const string CHECKOUTATTRIBUTEVALUES_PATTERN_KEY = "Nop.checkoutattributevalue.";
-        #endregion
-        
         #region Fields
 
+        private readonly IStaticCacheManager _staticCacheManager;
         private readonly IRepository<CheckoutAttribute> _checkoutAttributeRepository;
         private readonly IRepository<CheckoutAttributeValue> _checkoutAttributeValueRepository;
         private readonly IStoreMappingService _storeMappingService;
-        private readonly IEventPublisher _eventPublisher;
-        private readonly ICacheManager _cacheManager;
-        
+
         #endregion
 
         #region Ctor
 
-        /// <summary>
-        /// Ctor
-        /// </summary>
-        /// <param name="cacheManager">Cache manager</param>
-        /// <param name="checkoutAttributeRepository">Checkout attribute repository</param>
-        /// <param name="checkoutAttributeValueRepository">Checkout attribute value repository</param>
-        /// <param name="storeMappingService">Store mapping service</param>
-        /// <param name="eventPublisher">Event published</param>
-        public CheckoutAttributeService(ICacheManager cacheManager,
+        public CheckoutAttributeService(IStaticCacheManager staticCacheManager,
             IRepository<CheckoutAttribute> checkoutAttributeRepository,
             IRepository<CheckoutAttributeValue> checkoutAttributeValueRepository,
-            IStoreMappingService storeMappingService,
-            IEventPublisher eventPublisher)
+            IStoreMappingService storeMappingService)
         {
-            this._cacheManager = cacheManager;
-            this._checkoutAttributeRepository = checkoutAttributeRepository;
-            this._checkoutAttributeValueRepository = checkoutAttributeValueRepository;
-            this._storeMappingService = storeMappingService;
-            this._eventPublisher = eventPublisher;
+            _staticCacheManager = staticCacheManager;
+            _checkoutAttributeRepository = checkoutAttributeRepository;
+            _checkoutAttributeValueRepository = checkoutAttributeValueRepository;
+            _storeMappingService = storeMappingService;
         }
 
         #endregion
@@ -98,46 +46,57 @@ namespace Nop.Services.Orders
         /// Deletes a checkout attribute
         /// </summary>
         /// <param name="checkoutAttribute">Checkout attribute</param>
-        public virtual void DeleteCheckoutAttribute(CheckoutAttribute checkoutAttribute)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteCheckoutAttributeAsync(CheckoutAttribute checkoutAttribute)
         {
-            if (checkoutAttribute == null)
-                throw new ArgumentNullException("checkoutAttribute");
+            await _checkoutAttributeRepository.DeleteAsync(checkoutAttribute);
+        }
 
-            _checkoutAttributeRepository.Delete(checkoutAttribute);
+        /// <summary>
+        /// Deletes checkout attributes
+        /// </summary>
+        /// <param name="checkoutAttributes">Checkout attributes</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteCheckoutAttributesAsync(IList<CheckoutAttribute> checkoutAttributes)
+        {
+            if (checkoutAttributes == null)
+                throw new ArgumentNullException(nameof(checkoutAttributes));
 
-            _cacheManager.RemoveByPattern(CHECKOUTATTRIBUTES_PATTERN_KEY);
-            _cacheManager.RemoveByPattern(CHECKOUTATTRIBUTEVALUES_PATTERN_KEY);
-
-            //event notification
-            _eventPublisher.EntityDeleted(checkoutAttribute);
+            foreach (var checkoutAttribute in checkoutAttributes) 
+                await DeleteCheckoutAttributeAsync(checkoutAttribute);
         }
 
         /// <summary>
         /// Gets all checkout attributes
         /// </summary>
         /// <param name="storeId">Store identifier</param>
-        /// <param name="excludeShippableAttributes">A value indicating whether we should exlude shippable attributes</param>
-        /// <returns>Checkout attributes</returns>
-        public virtual IList<CheckoutAttribute> GetAllCheckoutAttributes(int storeId = 0, bool excludeShippableAttributes = false)
+        /// <param name="excludeShippableAttributes">A value indicating whether we should exclude shippable attributes</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the checkout attributes
+        /// </returns>
+        public virtual async Task<IList<CheckoutAttribute>> GetAllCheckoutAttributesAsync(int storeId = 0, bool excludeShippableAttributes = false)
         {
-            string key = string.Format(CHECKOUTATTRIBUTES_ALL_KEY, storeId, excludeShippableAttributes);
-            return _cacheManager.Get(key, () =>
+            var key = _staticCacheManager.PrepareKeyForDefaultCache(NopOrderDefaults.CheckoutAttributesAllCacheKey, storeId, excludeShippableAttributes);
+
+            return await _staticCacheManager.GetAsync(key, async () =>
             {
-                var query = from ca in _checkoutAttributeRepository.Table
-                            orderby ca.DisplayOrder
-                            select ca;
-                var checkoutAttributes = query.ToList();
+                var checkoutAttributes = (await _checkoutAttributeRepository.GetAllAsync(query =>
+                {
+                    return from ca in query
+                        orderby ca.DisplayOrder, ca.Id
+                        select ca;
+                })).ToAsyncEnumerable();
+
                 if (storeId > 0)
-                {
                     //store mapping
-                    checkoutAttributes = checkoutAttributes.Where(ca => _storeMappingService.Authorize(ca)).ToList();
-                }
+                    checkoutAttributes = checkoutAttributes.WhereAwait(async ca => await _storeMappingService.AuthorizeAsync(ca, storeId));
+
                 if (excludeShippableAttributes)
-                {
                     //remove attributes which require shippable products
-                    checkoutAttributes = checkoutAttributes.RemoveShippableAttributes().ToList();
-                }
-                return checkoutAttributes;
+                    checkoutAttributes = checkoutAttributes.Where(x => !x.ShippableProductRequired);
+
+                return await checkoutAttributes.ToListAsync();
             });
         }
 
@@ -145,50 +104,46 @@ namespace Nop.Services.Orders
         /// Gets a checkout attribute 
         /// </summary>
         /// <param name="checkoutAttributeId">Checkout attribute identifier</param>
-        /// <returns>Checkout attribute</returns>
-        public virtual CheckoutAttribute GetCheckoutAttributeById(int checkoutAttributeId)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the checkout attribute
+        /// </returns>
+        public virtual async Task<CheckoutAttribute> GetCheckoutAttributeByIdAsync(int checkoutAttributeId)
         {
-            if (checkoutAttributeId == 0)
-                return null;
-            
-            string key = string.Format(CHECKOUTATTRIBUTES_BY_ID_KEY, checkoutAttributeId);
-            return _cacheManager.Get(key, () => _checkoutAttributeRepository.GetById(checkoutAttributeId));
+            return await _checkoutAttributeRepository.GetByIdAsync(checkoutAttributeId, cache => default);
+        }
+
+        /// <summary>
+        /// Gets checkout attributes 
+        /// </summary>
+        /// <param name="checkoutAttributeIds">Checkout attribute identifiers</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the checkout attributes
+        /// </returns>
+        public virtual async Task<IList<CheckoutAttribute>> GetCheckoutAttributeByIdsAsync(int[] checkoutAttributeIds)
+        {
+            return await _checkoutAttributeRepository.GetByIdsAsync(checkoutAttributeIds);
         }
 
         /// <summary>
         /// Inserts a checkout attribute
         /// </summary>
         /// <param name="checkoutAttribute">Checkout attribute</param>
-        public virtual void InsertCheckoutAttribute(CheckoutAttribute checkoutAttribute)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task InsertCheckoutAttributeAsync(CheckoutAttribute checkoutAttribute)
         {
-            if (checkoutAttribute == null)
-                throw new ArgumentNullException("checkoutAttribute");
-
-            _checkoutAttributeRepository.Insert(checkoutAttribute);
-
-            _cacheManager.RemoveByPattern(CHECKOUTATTRIBUTES_PATTERN_KEY);
-            _cacheManager.RemoveByPattern(CHECKOUTATTRIBUTEVALUES_PATTERN_KEY);
-
-            //event notification
-            _eventPublisher.EntityInserted(checkoutAttribute);
+            await _checkoutAttributeRepository.InsertAsync(checkoutAttribute);
         }
 
         /// <summary>
         /// Updates the checkout attribute
         /// </summary>
         /// <param name="checkoutAttribute">Checkout attribute</param>
-        public virtual void UpdateCheckoutAttribute(CheckoutAttribute checkoutAttribute)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateCheckoutAttributeAsync(CheckoutAttribute checkoutAttribute)
         {
-            if (checkoutAttribute == null)
-                throw new ArgumentNullException("checkoutAttribute");
-
-            _checkoutAttributeRepository.Update(checkoutAttribute);
-
-            _cacheManager.RemoveByPattern(CHECKOUTATTRIBUTES_PATTERN_KEY);
-            _cacheManager.RemoveByPattern(CHECKOUTATTRIBUTEVALUES_PATTERN_KEY);
-
-            //event notification
-            _eventPublisher.EntityUpdated(checkoutAttribute);
+            await _checkoutAttributeRepository.UpdateAsync(checkoutAttribute);
         }
 
         #endregion
@@ -199,89 +154,67 @@ namespace Nop.Services.Orders
         /// Deletes a checkout attribute value
         /// </summary>
         /// <param name="checkoutAttributeValue">Checkout attribute value</param>
-        public virtual void DeleteCheckoutAttributeValue(CheckoutAttributeValue checkoutAttributeValue)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteCheckoutAttributeValueAsync(CheckoutAttributeValue checkoutAttributeValue)
         {
-            if (checkoutAttributeValue == null)
-                throw new ArgumentNullException("checkoutAttributeValue");
-
-            _checkoutAttributeValueRepository.Delete(checkoutAttributeValue);
-
-            _cacheManager.RemoveByPattern(CHECKOUTATTRIBUTES_PATTERN_KEY);
-            _cacheManager.RemoveByPattern(CHECKOUTATTRIBUTEVALUES_PATTERN_KEY);
-
-            //event notification
-            _eventPublisher.EntityDeleted(checkoutAttributeValue);
+            await _checkoutAttributeValueRepository.DeleteAsync(checkoutAttributeValue);
         }
 
         /// <summary>
         /// Gets checkout attribute values by checkout attribute identifier
         /// </summary>
         /// <param name="checkoutAttributeId">The checkout attribute identifier</param>
-        /// <returns>Checkout attribute values</returns>
-        public virtual IList<CheckoutAttributeValue> GetCheckoutAttributeValues(int checkoutAttributeId)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the checkout attribute values
+        /// </returns>
+        public virtual async Task<IList<CheckoutAttributeValue>> GetCheckoutAttributeValuesAsync(int checkoutAttributeId)
         {
-            string key = string.Format(CHECKOUTATTRIBUTEVALUES_ALL_KEY, checkoutAttributeId);
-            return _cacheManager.Get(key, () =>
-            {
-                var query = from cav in _checkoutAttributeValueRepository.Table
-                            orderby cav.DisplayOrder
-                            where cav.CheckoutAttributeId == checkoutAttributeId
-                            select cav;
-                var checkoutAttributeValues = query.ToList();
-                return checkoutAttributeValues;
-            });
+            var key = _staticCacheManager.PrepareKeyForDefaultCache(NopOrderDefaults.CheckoutAttributeValuesAllCacheKey, checkoutAttributeId);
+
+            var query = from cav in _checkoutAttributeValueRepository.Table
+                orderby cav.DisplayOrder, cav.Id
+                where cav.CheckoutAttributeId == checkoutAttributeId
+                select cav;
+            
+            var checkoutAttributeValues = await _staticCacheManager.GetAsync(key, async ()=> await query.ToListAsync());
+
+            return checkoutAttributeValues;
         }
-        
+
         /// <summary>
         /// Gets a checkout attribute value
         /// </summary>
         /// <param name="checkoutAttributeValueId">Checkout attribute value identifier</param>
-        /// <returns>Checkout attribute value</returns>
-        public virtual CheckoutAttributeValue GetCheckoutAttributeValueById(int checkoutAttributeValueId)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the checkout attribute value
+        /// </returns>
+        public virtual async Task<CheckoutAttributeValue> GetCheckoutAttributeValueByIdAsync(int checkoutAttributeValueId)
         {
-            if (checkoutAttributeValueId == 0)
-                return null;
-            
-            string key = string.Format(CHECKOUTATTRIBUTEVALUES_BY_ID_KEY, checkoutAttributeValueId);
-            return _cacheManager.Get(key, () => _checkoutAttributeValueRepository.GetById(checkoutAttributeValueId));
+            return await _checkoutAttributeValueRepository.GetByIdAsync(checkoutAttributeValueId, cache => default);
         }
 
         /// <summary>
         /// Inserts a checkout attribute value
         /// </summary>
         /// <param name="checkoutAttributeValue">Checkout attribute value</param>
-        public virtual void InsertCheckoutAttributeValue(CheckoutAttributeValue checkoutAttributeValue)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task InsertCheckoutAttributeValueAsync(CheckoutAttributeValue checkoutAttributeValue)
         {
-            if (checkoutAttributeValue == null)
-                throw new ArgumentNullException("checkoutAttributeValue");
-
-            _checkoutAttributeValueRepository.Insert(checkoutAttributeValue);
-
-            _cacheManager.RemoveByPattern(CHECKOUTATTRIBUTES_PATTERN_KEY);
-            _cacheManager.RemoveByPattern(CHECKOUTATTRIBUTEVALUES_PATTERN_KEY);
-
-            //event notification
-            _eventPublisher.EntityInserted(checkoutAttributeValue);
+            await _checkoutAttributeValueRepository.InsertAsync(checkoutAttributeValue);
         }
 
         /// <summary>
         /// Updates the checkout attribute value
         /// </summary>
         /// <param name="checkoutAttributeValue">Checkout attribute value</param>
-        public virtual void UpdateCheckoutAttributeValue(CheckoutAttributeValue checkoutAttributeValue)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateCheckoutAttributeValueAsync(CheckoutAttributeValue checkoutAttributeValue)
         {
-            if (checkoutAttributeValue == null)
-                throw new ArgumentNullException("checkoutAttributeValue");
-
-            _checkoutAttributeValueRepository.Update(checkoutAttributeValue);
-
-            _cacheManager.RemoveByPattern(CHECKOUTATTRIBUTES_PATTERN_KEY);
-            _cacheManager.RemoveByPattern(CHECKOUTATTRIBUTEVALUES_PATTERN_KEY);
-
-            //event notification
-            _eventPublisher.EntityUpdated(checkoutAttributeValue);
+            await _checkoutAttributeValueRepository.UpdateAsync(checkoutAttributeValue);
         }
-        
+
         #endregion
 
         #endregion

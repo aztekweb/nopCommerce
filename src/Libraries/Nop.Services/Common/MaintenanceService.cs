@@ -1,9 +1,8 @@
-using System;
+﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using Nop.Core;
-using Nop.Core.Data;
-using Nop.Core.Domain.Common;
-using Nop.Data;
+using Nop.Core.Infrastructure;
 
 namespace Nop.Services.Common
 {
@@ -13,26 +12,33 @@ namespace Nop.Services.Common
     public partial class MaintenanceService : IMaintenanceService
     {
         #region Fields
+       
+        private readonly INopFileProvider _fileProvider;
 
-        private readonly IDataProvider _dataProvider;
-        private readonly IDbContext _dbContext;
-        private readonly CommonSettings _commonSettings;
         #endregion
 
         #region Ctor
 
-        /// <summary>
-        /// Ctor
-        /// </summary>
-        /// <param name="dataProvider">Data provider</param>
-        /// <param name="dbContext">Database Context</param>
-        /// <param name="commonSettings">Common settings</param>
-        public MaintenanceService(IDataProvider dataProvider, IDbContext dbContext,
-            CommonSettings commonSettings)
+        public MaintenanceService(INopFileProvider fileProvider)
         {
-            this._dataProvider = dataProvider;
-            this._dbContext = dbContext;
-            this._commonSettings = commonSettings;
+            _fileProvider = fileProvider;
+        }
+
+        #endregion
+
+        #region Utilities
+
+        /// <summary>
+        /// Get directory path for backs
+        /// </summary>
+        /// <param name="ensureFolderCreated">A value indicating whether a directory should be created if it doesn't exist</param>
+        /// <returns></returns>
+        protected virtual string GetBackupDirectoryPath(bool ensureFolderCreated = true)
+        {
+            var path = _fileProvider.GetAbsolutePath(NopCommonDefaults.DbBackupsPath);
+            if (ensureFolderCreated)
+                _fileProvider.CreateDirectory(path);
+            return path;
         }
 
         #endregion
@@ -40,46 +46,37 @@ namespace Nop.Services.Common
         #region Methods
 
         /// <summary>
-        /// Get the current ident value
+        /// Gets all backup files
         /// </summary>
-        /// <typeparam name="T">Entity</typeparam>
-        /// <returns>Integer ident; null if cannot get the result</returns>
-        public virtual int? GetTableIdent<T>() where T: BaseEntity
+        /// <returns>Backup file collection</returns>
+        public virtual IList<string> GetAllBackupFiles()
         {
-            if (_commonSettings.UseStoredProceduresIfSupported && _dataProvider.StoredProceduredSupported)
-            {
-                //stored procedures are enabled and supported by the database
-                var tableName = _dbContext.GetTableName<T>();
-                var result = _dbContext.SqlQuery<decimal>(string.Format("SELECT IDENT_CURRENT('[{0}]')", tableName));
-                return Convert.ToInt32(result.FirstOrDefault());
-            }
-            
-            //stored procedures aren't supported
-            return null;
+            var path = GetBackupDirectoryPath();
+
+            if (!_fileProvider.DirectoryExists(path)) 
+                throw new NopException("Backup directory not exists");
+
+            return _fileProvider.GetFiles(path, $"*.{NopCommonDefaults.DbBackupFileExtension}")
+                .OrderByDescending(p => _fileProvider.GetLastWriteTime(p)).ToList();
+        }
+        
+        /// <summary>
+        /// Returns the path to the backup file
+        /// </summary>
+        /// <param name="backupFileName">The name of the backup file</param>
+        /// <returns>The path to the backup file</returns>
+        public virtual string GetBackupPath(string backupFileName)
+        {
+            return _fileProvider.Combine(GetBackupDirectoryPath(), backupFileName);
         }
 
         /// <summary>
-        /// Set table ident (is supported)
+        /// Creates a path to a new database backup file
         /// </summary>
-        /// <typeparam name="T">Entity</typeparam>
-        /// <param name="ident">Ident value</param>
-        public virtual void SetTableIdent<T>(int ident) where T : BaseEntity
+        /// <returns>Path to a new database backup file</returns>
+        public virtual string CreateNewBackupFilePath()
         {
-            if (_commonSettings.UseStoredProceduresIfSupported && _dataProvider.StoredProceduredSupported)
-            {
-                //stored procedures are enabled and supported by the database.
-
-                var currentIdent = GetTableIdent<T>();
-                if (currentIdent.HasValue && ident > currentIdent.Value)
-                {
-                    var tableName = _dbContext.GetTableName<T>();
-                    _dbContext.ExecuteSqlCommand(string.Format("DBCC CHECKIDENT([{0}], RESEED, {1})", tableName, ident));
-                }
-            }
-            else
-            {
-                throw new Exception("Stored procedures are not supported by your database");
-            }
+            return _fileProvider.Combine(GetBackupDirectoryPath(), $"database_{DateTime.Now:yyyy-MM-dd-HH-mm-ss}_{CommonHelper.GenerateRandomDigitCode(10)}.{NopCommonDefaults.DbBackupFileExtension}");
         }
 
         #endregion

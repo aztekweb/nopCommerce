@@ -1,10 +1,10 @@
 ﻿using System.Collections.Generic;
 using Nop.Core.Domain.Catalog;
-using Nop.Web.Framework.Mvc;
+using Nop.Web.Framework.Models;
 
 namespace Nop.Web.Models.Customer
 {
-    public partial class CustomerAttributeModel : BaseNopEntityModel
+    public partial record CustomerAttributeModel : BaseNopEntityModel
     {
         public CustomerAttributeModel()
         {
@@ -26,7 +26,7 @@ namespace Nop.Web.Models.Customer
 
     }
 
-    public partial class CustomerAttributeValueModel : BaseNopEntityModel
+    public partial record CustomerAttributeValueModel : BaseNopEntityModel
     {
         public string Name { get; set; }
 

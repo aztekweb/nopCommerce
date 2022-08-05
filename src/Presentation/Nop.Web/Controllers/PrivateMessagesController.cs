@@ -1,239 +1,98 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Web.Mvc;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Nop.Core;
 using Nop.Core.Domain.Customers;
 using Nop.Core.Domain.Forums;
 using Nop.Services.Customers;
 using Nop.Services.Forums;
-using Nop.Services.Helpers;
 using Nop.Services.Localization;
 using Nop.Services.Logging;
+using Nop.Web.Factories;
 using Nop.Web.Framework.Controllers;
-using Nop.Web.Framework.Security;
-using Nop.Web.Models.Common;
 using Nop.Web.Models.PrivateMessages;
 
 namespace Nop.Web.Controllers
 {
-    [NopHttpsRequirement(SslRequirement.Yes)]
+    [AutoValidateAntiforgeryToken]
     public partial class PrivateMessagesController : BasePublicController
     {
         #region Fields
 
-        private readonly IForumService _forumService;
-        private readonly ICustomerService _customerService;
-        private readonly ICustomerActivityService _customerActivityService;
-        private readonly ILocalizationService _localizationService;
-        private readonly IWorkContext _workContext;
-        private readonly IStoreContext _storeContext;
-        private readonly IDateTimeHelper _dateTimeHelper;
         private readonly ForumSettings _forumSettings;
-        private readonly CustomerSettings _customerSettings;
+        private readonly ICustomerActivityService _customerActivityService;
+        private readonly ICustomerService _customerService;
+        private readonly IForumService _forumService;
+        private readonly ILocalizationService _localizationService;
+        private readonly IPrivateMessagesModelFactory _privateMessagesModelFactory;
+        private readonly IStoreContext _storeContext;
+        private readonly IWorkContext _workContext;
 
         #endregion
 
-        #region Constructors
+        #region Ctor
 
-        public PrivateMessagesController(IForumService forumService,
-            ICustomerService customerService, ICustomerActivityService customerActivityService,
-            ILocalizationService localizationService, IWorkContext workContext, 
-            IStoreContext storeContext, IDateTimeHelper dateTimeHelper,
-            ForumSettings forumSettings, CustomerSettings customerSettings)
+        public PrivateMessagesController(ForumSettings forumSettings,
+            ICustomerActivityService customerActivityService,
+            ICustomerService customerService,
+            IForumService forumService,
+            ILocalizationService localizationService,
+            IPrivateMessagesModelFactory privateMessagesModelFactory,
+            IStoreContext storeContext,
+            IWorkContext workContext)
         {
-            this._forumService = forumService;
-            this._customerService = customerService;
-            this._customerActivityService = customerActivityService;
-            this._localizationService = localizationService;
-            this._workContext = workContext;
-            this._storeContext = storeContext;
-            this._dateTimeHelper = dateTimeHelper;
-            this._forumSettings = forumSettings;
-            this._customerSettings = customerSettings;
+            _forumSettings = forumSettings;
+            _customerActivityService = customerActivityService;
+            _customerService = customerService;
+            _forumService = forumService;
+            _localizationService = localizationService;
+            _privateMessagesModelFactory = privateMessagesModelFactory;
+            _storeContext = storeContext;
+            _workContext = workContext;
         }
 
         #endregion
-
-        #region Utilities
-
-        #endregion
-
+        
         #region Methods
 
-        public ActionResult Index(int? page, string tab)
+        public virtual async Task<IActionResult> Index(int? pageNumber, string tab)
         {
             if (!_forumSettings.AllowPrivateMessages)
             {
-                return RedirectToRoute("HomePage");
+                return RedirectToRoute("Homepage");
             }
 
-            if (_workContext.CurrentCustomer.IsGuest())
+            if (await _customerService.IsGuestAsync(await _workContext.GetCurrentCustomerAsync()))
             {
-                return new HttpUnauthorizedResult();
+                return Challenge();
             }
 
-            int inboxPage = 0;
-            int sentItemsPage = 0;
-            bool sentItemsTabSelected = false;
-
-            switch (tab)
-            {
-                case "inbox":
-                    if (page.HasValue)
-                    {
-                        inboxPage = page.Value;
-                    }
-                    break;
-                case "sent":
-                    if (page.HasValue)
-                    {
-                        sentItemsPage = page.Value;
-                    }
-                    sentItemsTabSelected = true;
-                    break;
-                default:
-                    break;
-            }
-
-            var model = new PrivateMessageIndexModel
-            {
-                InboxPage = inboxPage,
-                SentItemsPage = sentItemsPage,
-                SentItemsTabSelected = sentItemsTabSelected
-            };
-
+            var model = await _privateMessagesModelFactory.PreparePrivateMessageIndexModelAsync(pageNumber, tab);
             return View(model);
         }
-
-        //inbox tab
-        [ChildActionOnly]
-        public ActionResult Inbox(int page, string tab)
-        {
-            if (page > 0)
-            {
-                page -= 1;
-            }
-
-            var pageSize = _forumSettings.PrivateMessagesPageSize;
-
-            var list = _forumService.GetAllPrivateMessages(_storeContext.CurrentStore.Id,
-                0, _workContext.CurrentCustomer.Id, null, null, false, string.Empty, page, pageSize);
-
-            var inbox = new List<PrivateMessageModel>();
-
-            foreach (var pm in list)
-            {
-                inbox.Add(new PrivateMessageModel
-                {
-                    Id = pm.Id,
-                    FromCustomerId = pm.FromCustomer.Id,
-                    CustomerFromName = pm.FromCustomer.FormatUserName(),
-                    AllowViewingFromProfile = _customerSettings.AllowViewingProfiles && pm.FromCustomer != null && !pm.FromCustomer.IsGuest(),
-                    ToCustomerId = pm.ToCustomer.Id,
-                    CustomerToName = pm.ToCustomer.FormatUserName(),
-                    AllowViewingToProfile = _customerSettings.AllowViewingProfiles && pm.ToCustomer != null && !pm.ToCustomer.IsGuest(),
-                    Subject = pm.Subject,
-                    Message = pm.Text,
-                    CreatedOn = _dateTimeHelper.ConvertToUserTime( pm.CreatedOnUtc, DateTimeKind.Utc),
-                    IsRead = pm.IsRead,
-                });
-            }
-
-            var pagerModel = new PagerModel
-            {
-                PageSize = list.PageSize,
-                TotalRecords = list.TotalCount,
-                PageIndex = list.PageIndex,
-                ShowTotalSummary = false,
-                RouteActionName = "PrivateMessagesPaged",
-                UseRouteLinks = true,
-                RouteValues = new PrivateMessageRouteValues { page = page, tab = tab }
-            };
-
-            var model = new PrivateMessageListModel
-            {
-                Messages = inbox,
-                PagerModel = pagerModel
-            };
-
-            return PartialView(model);
-        }
-
-        //sent items tab
-        [ChildActionOnly]
-        public ActionResult SentItems(int page, string tab)
-        {
-            if (page > 0)
-            {
-                page -= 1;
-            }
-
-            var pageSize = _forumSettings.PrivateMessagesPageSize;
-
-            var list = _forumService.GetAllPrivateMessages(_storeContext.CurrentStore.Id, 
-                _workContext.CurrentCustomer.Id, 0, null, false, null, string.Empty, page, pageSize);
-
-            var sentItems = new List<PrivateMessageModel>();
-
-            foreach (var pm in list)
-            {
-                sentItems.Add(new PrivateMessageModel
-                {
-                    Id = pm.Id,
-                    FromCustomerId = pm.FromCustomer.Id,
-                    CustomerFromName = pm.FromCustomer.FormatUserName(),
-                    AllowViewingFromProfile = _customerSettings.AllowViewingProfiles && pm.FromCustomer != null && !pm.FromCustomer.IsGuest(),
-                    ToCustomerId = pm.ToCustomer.Id,
-                    CustomerToName = pm.ToCustomer.FormatUserName(),
-                    AllowViewingToProfile = _customerSettings.AllowViewingProfiles && pm.ToCustomer != null && !pm.ToCustomer.IsGuest(),
-                    Subject = pm.Subject,
-                    Message = pm.Text,
-                    CreatedOn = _dateTimeHelper.ConvertToUserTime(pm.CreatedOnUtc, DateTimeKind.Utc),
-                    IsRead = pm.IsRead,
-                });
-            }
-
-            var pagerModel = new PagerModel
-            {
-                PageSize = list.PageSize,
-                TotalRecords = list.TotalCount,
-                PageIndex = list.PageIndex,
-                ShowTotalSummary = false,
-                RouteActionName = "PrivateMessagesPaged",
-                UseRouteLinks = true,
-                RouteValues = new PrivateMessageRouteValues { page = page, tab = tab }
-            };
-
-            var model = new PrivateMessageListModel
-            {
-                Messages = sentItems,
-                PagerModel = pagerModel
-            };
-
-            return PartialView(model);
-        }
-
+        
         [HttpPost, FormValueRequired("delete-inbox"), ActionName("InboxUpdate")]
-        [PublicAntiForgery]
-        public ActionResult DeleteInboxPM(FormCollection formCollection)
+        public virtual async Task<IActionResult> DeleteInboxPM(IFormCollection formCollection)
         {
-            foreach (var key in formCollection.AllKeys)
+            foreach (var key in formCollection.Keys)
             {
                 var value = formCollection[key];
 
                 if (value.Equals("on") && key.StartsWith("pm", StringComparison.InvariantCultureIgnoreCase))
                 {
                     var id = key.Replace("pm", "").Trim();
-                    int privateMessageId;
-                    if (Int32.TryParse(id, out privateMessageId))
+                    if (int.TryParse(id, out var privateMessageId))
                     {
-                        var pm = _forumService.GetPrivateMessageById(privateMessageId);
+                        var pm = await _forumService.GetPrivateMessageByIdAsync(privateMessageId);
                         if (pm != null)
                         {
-                            if (pm.ToCustomerId == _workContext.CurrentCustomer.Id)
+                            var customer = await _workContext.GetCurrentCustomerAsync();
+
+                            if (pm.ToCustomerId == customer.Id)
                             {
                                 pm.IsDeletedByRecipient = true;
-                                _forumService.UpdatePrivateMessage(pm);
+                                await _forumService.UpdatePrivateMessageAsync(pm);
                             }
                         }
                     }
@@ -243,26 +102,26 @@ namespace Nop.Web.Controllers
         }
 
         [HttpPost, FormValueRequired("mark-unread"), ActionName("InboxUpdate")]
-        [PublicAntiForgery]
-        public ActionResult MarkUnread(FormCollection formCollection)
+        public virtual async Task<IActionResult> MarkUnread(IFormCollection formCollection)
         {
-            foreach (var key in formCollection.AllKeys)
+            foreach (var key in formCollection.Keys)
             {
                 var value = formCollection[key];
 
                 if (value.Equals("on") && key.StartsWith("pm", StringComparison.InvariantCultureIgnoreCase))
                 {
                     var id = key.Replace("pm", "").Trim();
-                    int privateMessageId;
-                    if (Int32.TryParse(id, out privateMessageId))
+                    if (int.TryParse(id, out var privateMessageId))
                     {
-                        var pm = _forumService.GetPrivateMessageById(privateMessageId);
+                        var pm = await _forumService.GetPrivateMessageByIdAsync(privateMessageId);
                         if (pm != null)
                         {
-                            if (pm.ToCustomerId == _workContext.CurrentCustomer.Id)
+                            var customer = await _workContext.GetCurrentCustomerAsync();
+
+                            if (pm.ToCustomerId == customer.Id)
                             {
                                 pm.IsRead = false;
-                                _forumService.UpdatePrivateMessage(pm);
+                                await _forumService.UpdatePrivateMessageAsync(pm);
                             }
                         }
                     }
@@ -273,106 +132,82 @@ namespace Nop.Web.Controllers
 
         //updates sent items (deletes PrivateMessages)
         [HttpPost, FormValueRequired("delete-sent"), ActionName("SentUpdate")]
-        [PublicAntiForgery]
-        public ActionResult DeleteSentPM(FormCollection formCollection)
+        public virtual async Task<IActionResult> DeleteSentPM(IFormCollection formCollection)
         {
-            foreach (var key in formCollection.AllKeys)
+            foreach (var key in formCollection.Keys)
             {
                 var value = formCollection[key];
 
                 if (value.Equals("on") && key.StartsWith("si", StringComparison.InvariantCultureIgnoreCase))
                 {
                     var id = key.Replace("si", "").Trim();
-                    int privateMessageId;
-                    if (Int32.TryParse(id, out privateMessageId))
+                    if (int.TryParse(id, out var privateMessageId))
                     {
-                        PrivateMessage pm = _forumService.GetPrivateMessageById(privateMessageId);
+                        var pm = await _forumService.GetPrivateMessageByIdAsync(privateMessageId);
                         if (pm != null)
                         {
-                            if (pm.FromCustomerId == _workContext.CurrentCustomer.Id)
+                            var customer = await _workContext.GetCurrentCustomerAsync();
+
+                            if (pm.FromCustomerId == customer.Id)
                             {
                                 pm.IsDeletedByAuthor = true;
-                                _forumService.UpdatePrivateMessage(pm);
+                                await _forumService.UpdatePrivateMessageAsync(pm);
                             }
                         }
                     }
                 }
-
             }
             return RedirectToRoute("PrivateMessages", new {tab = "sent"});
         }
 
-        public ActionResult SendPM(int toCustomerId, int? replyToMessageId)
+        public virtual async Task<IActionResult> SendPM(int toCustomerId, int? replyToMessageId)
         {
             if (!_forumSettings.AllowPrivateMessages)
-            {
-                return RedirectToRoute("HomePage");
-            }
+                return RedirectToRoute("Homepage");
 
-            if (_workContext.CurrentCustomer.IsGuest())
-            {
-                return new HttpUnauthorizedResult();
-            }
+            if (await _customerService.IsGuestAsync(await _workContext.GetCurrentCustomerAsync()))
+                return Challenge();
 
-            var customerTo = _customerService.GetCustomerById(toCustomerId);
-
-            if (customerTo == null || customerTo.IsGuest())
-            {
+            var customerTo = await _customerService.GetCustomerByIdAsync(toCustomerId);
+            if (customerTo == null || await _customerService.IsGuestAsync(customerTo))
                 return RedirectToRoute("PrivateMessages");
-            }
 
-            var model = new SendPrivateMessageModel();
-            model.ToCustomerId = customerTo.Id;
-            model.CustomerToName = customerTo.FormatUserName();
-            model.AllowViewingToProfile = _customerSettings.AllowViewingProfiles && !customerTo.IsGuest();
-
+            PrivateMessage replyToPM = null;
             if (replyToMessageId.HasValue)
             {
                 //reply to a previous PM
-                var replyToPM = _forumService.GetPrivateMessageById(replyToMessageId.Value);
-                if (replyToPM == null)
-                {
-                    return RedirectToRoute("PrivateMessages");
-                }
-
-                if (replyToPM.ToCustomerId == _workContext.CurrentCustomer.Id || replyToPM.FromCustomerId == _workContext.CurrentCustomer.Id)
-                {
-                    model.ReplyToMessageId = replyToPM.Id;
-                    model.Subject = string.Format("Re: {0}", replyToPM.Subject);
-                }
-                else
-                {
-                    return RedirectToRoute("PrivateMessages");
-                }
+                replyToPM = await _forumService.GetPrivateMessageByIdAsync(replyToMessageId.Value);
             }
+
+            var model = await _privateMessagesModelFactory.PrepareSendPrivateMessageModelAsync(customerTo, replyToPM);
             return View(model);
         }
 
         [HttpPost]
-        [PublicAntiForgery]
-        public ActionResult SendPM(SendPrivateMessageModel model)
+        public virtual async Task<IActionResult> SendPM(SendPrivateMessageModel model)
         {
             if (!_forumSettings.AllowPrivateMessages)
             {
-                return RedirectToRoute("HomePage");
+                return RedirectToRoute("Homepage");
             }
 
-            if (_workContext.CurrentCustomer.IsGuest())
+            var customer = await _workContext.GetCurrentCustomerAsync();
+            if (await _customerService.IsGuestAsync(customer))
             {
-                return new HttpUnauthorizedResult();
+                return Challenge();
             }
 
-            Customer toCustomer = null;
-            var replyToPM = _forumService.GetPrivateMessageById(model.ReplyToMessageId);
+            Customer toCustomer;
+            var replyToPM = await _forumService.GetPrivateMessageByIdAsync(model.ReplyToMessageId);
             if (replyToPM != null)
             {
                 //reply to a previous PM
-                if (replyToPM.ToCustomerId == _workContext.CurrentCustomer.Id || replyToPM.FromCustomerId == _workContext.CurrentCustomer.Id)
+                if (replyToPM.ToCustomerId == customer.Id || replyToPM.FromCustomerId == customer.Id)
                 {
                     //Reply to already sent PM (by current customer) should not be sent to yourself
-                    toCustomer = replyToPM.FromCustomerId == _workContext.CurrentCustomer.Id
-                        ? replyToPM.ToCustomer
-                        : replyToPM.FromCustomer;
+                    toCustomer = await _customerService.GetCustomerByIdAsync(replyToPM.FromCustomerId == customer.Id
+                        ? replyToPM.ToCustomerId
+                        : replyToPM.FromCustomerId);
                 }
                 else
                 {
@@ -382,40 +217,38 @@ namespace Nop.Web.Controllers
             else
             {
                 //first PM
-                toCustomer = _customerService.GetCustomerById(model.ToCustomerId);
+                toCustomer = await _customerService.GetCustomerByIdAsync(model.ToCustomerId);
             }
 
-            if (toCustomer == null || toCustomer.IsGuest())
+            if (toCustomer == null || await _customerService.IsGuestAsync(toCustomer))
             {
                 return RedirectToRoute("PrivateMessages");
             }
-            model.ToCustomerId = toCustomer.Id;
-            model.CustomerToName = toCustomer.FormatUserName();
-            model.AllowViewingToProfile = _customerSettings.AllowViewingProfiles && !toCustomer.IsGuest();
 
             if (ModelState.IsValid)
             {
                 try
                 {
-                    string subject = model.Subject;
+                    var subject = model.Subject;
                     if (_forumSettings.PMSubjectMaxLength > 0 && subject.Length > _forumSettings.PMSubjectMaxLength)
                     {
-                        subject = subject.Substring(0, _forumSettings.PMSubjectMaxLength);
+                        subject = subject[0.._forumSettings.PMSubjectMaxLength];
                     }
 
                     var text = model.Message;
                     if (_forumSettings.PMTextMaxLength > 0 && text.Length > _forumSettings.PMTextMaxLength)
                     {
-                        text = text.Substring(0, _forumSettings.PMTextMaxLength);
+                        text = text[0.._forumSettings.PMTextMaxLength];
                     }
 
                     var nowUtc = DateTime.UtcNow;
+                    var store = await _storeContext.GetCurrentStoreAsync();
 
                     var privateMessage = new PrivateMessage
                     {
-                        StoreId = _storeContext.CurrentStore.Id,
+                        StoreId = store.Id,
                         ToCustomerId = toCustomer.Id,
-                        FromCustomerId = _workContext.CurrentCustomer.Id,
+                        FromCustomerId = customer.Id,
                         Subject = subject,
                         Text = text,
                         IsDeletedByAuthor = false,
@@ -424,10 +257,11 @@ namespace Nop.Web.Controllers
                         CreatedOnUtc = nowUtc
                     };
 
-                    _forumService.InsertPrivateMessage(privateMessage);
+                    await _forumService.InsertPrivateMessageAsync(privateMessage);
 
                     //activity log
-                    _customerActivityService.InsertActivity("PublicStore.SendPM", _localizationService.GetResource("ActivityLog.PublicStore.SendPM"), toCustomer.Email);
+                    await _customerActivityService.InsertActivityAsync("PublicStore.SendPM",
+                        string.Format(await _localizationService.GetResourceAsync("ActivityLog.PublicStore.SendPM"), toCustomer.Email), toCustomer);
 
                     return RedirectToRoute("PrivateMessages", new { tab = "sent" });
                 }
@@ -437,33 +271,35 @@ namespace Nop.Web.Controllers
                 }
             }
 
+            model = await _privateMessagesModelFactory.PrepareSendPrivateMessageModelAsync(toCustomer, replyToPM);
             return View(model);
         }
 
-        public ActionResult ViewPM(int privateMessageId)
+        public virtual async Task<IActionResult> ViewPM(int privateMessageId)
         {
             if (!_forumSettings.AllowPrivateMessages)
             {
-                return RedirectToRoute("HomePage");
+                return RedirectToRoute("Homepage");
             }
 
-            if (_workContext.CurrentCustomer.IsGuest())
+            var customer = await _workContext.GetCurrentCustomerAsync();
+            if (await _customerService.IsGuestAsync(customer))
             {
-                return new HttpUnauthorizedResult();
+                return Challenge();
             }
 
-            var pm = _forumService.GetPrivateMessageById(privateMessageId);
+            var pm = await _forumService.GetPrivateMessageByIdAsync(privateMessageId);
             if (pm != null)
             {
-                if (pm.ToCustomerId != _workContext.CurrentCustomer.Id && pm.FromCustomerId != _workContext.CurrentCustomer.Id)
+                if (pm.ToCustomerId != customer.Id && pm.FromCustomerId != customer.Id)
                 {
                     return RedirectToRoute("PrivateMessages");
                 }
 
-                if (!pm.IsRead && pm.ToCustomerId == _workContext.CurrentCustomer.Id)
+                if (!pm.IsRead && pm.ToCustomerId == customer.Id)
                 {
                     pm.IsRead = true;
-                    _forumService.UpdatePrivateMessage(pm);
+                    await _forumService.UpdatePrivateMessageAsync(pm);
                 }
             }
             else
@@ -471,49 +307,36 @@ namespace Nop.Web.Controllers
                 return RedirectToRoute("PrivateMessages");
             }
 
-            var model = new PrivateMessageModel
-            {
-                Id = pm.Id,
-                FromCustomerId = pm.FromCustomer.Id,
-                CustomerFromName = pm.FromCustomer.FormatUserName(),
-                AllowViewingFromProfile = _customerSettings.AllowViewingProfiles && pm.FromCustomer != null && !pm.FromCustomer.IsGuest(),
-                ToCustomerId = pm.ToCustomer.Id,
-                CustomerToName = pm.ToCustomer.FormatUserName(),
-                AllowViewingToProfile = _customerSettings.AllowViewingProfiles && pm.ToCustomer != null && !pm.ToCustomer.IsGuest(),
-                Subject = pm.Subject,
-                Message = pm.FormatPrivateMessageText(),
-                CreatedOn = _dateTimeHelper.ConvertToUserTime(pm.CreatedOnUtc, DateTimeKind.Utc),
-                IsRead = pm.IsRead,
-            };
-
+            var model = await _privateMessagesModelFactory.PreparePrivateMessageModelAsync(pm);
             return View(model);
         }
 
-        public ActionResult DeletePM(int privateMessageId)
+        public virtual async Task<IActionResult> DeletePM(int privateMessageId)
         {
             if (!_forumSettings.AllowPrivateMessages)
             {
-                return RedirectToRoute("HomePage");
+                return RedirectToRoute("Homepage");
             }
 
-            if (_workContext.CurrentCustomer.IsGuest())
+            var customer = await _workContext.GetCurrentCustomerAsync();
+            if (await _customerService.IsGuestAsync(customer))
             {
-                return new HttpUnauthorizedResult();
+                return Challenge();
             }
 
-            var pm = _forumService.GetPrivateMessageById(privateMessageId);
+            var pm = await _forumService.GetPrivateMessageByIdAsync(privateMessageId);
             if (pm != null)
             {
-                if (pm.FromCustomerId == _workContext.CurrentCustomer.Id)
+                if (pm.FromCustomerId == customer.Id)
                 {
                     pm.IsDeletedByAuthor = true;
-                    _forumService.UpdatePrivateMessage(pm);
+                    await _forumService.UpdatePrivateMessageAsync(pm);
                 }
 
-                if (pm.ToCustomerId == _workContext.CurrentCustomer.Id)
+                if (pm.ToCustomerId == customer.Id)
                 {
                     pm.IsDeletedByRecipient = true;
-                    _forumService.UpdatePrivateMessage(pm);
+                    await _forumService.UpdatePrivateMessageAsync(pm);
                 }
             }
             return RedirectToRoute("PrivateMessages");

@@ -1,21 +1,20 @@
 ﻿@model UserAgreementModel
-@using Nop.Web.Models.Customer;
 @{
-    Layout = "~/Views/Shared/_ColumnsOne.cshtml"; 
+    Layout = "_ColumnsOne";
+
+    //page class
+    NopHtml.AppendPageCssClassParts("html-user-agreement-page");
 }
-<script type="text/javascript">
+<script asp-location="Footer">
     $(document).ready(function () {
-
-        $("#agreement-agree").click(toggleContinueButton);
-
+        $("#agreement-agree").on('click', toggleContinueButton);
         toggleContinueButton();
     });
-
     function toggleContinueButton() {
         if ($('#agreement-agree').is(':checked')) {
-            $('#continue-downloading').removeAttr('disabled');
+            $('#continue-downloading').prop('disabled', false);
         } else {
-            $('#continue-downloading').attr('disabled', 'disabled');
+            $('#continue-downloading').prop('disabled', true);
         }
     }
 </script>
@@ -29,7 +28,7 @@
             @Html.Raw(Model.UserAgreementText)
         </div>
         <div class="buttons">
-            <input type="submit" id="continue-downloading" class="button-1 user-agreement-button" value="@T("Common.Continue")" onclick="setLocation('@Url.RouteUrl("GetDownload", new { orderItemId = Model.OrderItemGuid, agree = true })')" />
+            <button type="submit" id="continue-downloading" class="button-1 user-agreement-button" onclick="setLocation('@Url.RouteUrl("GetDownload", new { orderItemId = Model.OrderItemGuid, agree = true })')">@T("Common.Continue")</button>
         </div>
     </div>
 </div>

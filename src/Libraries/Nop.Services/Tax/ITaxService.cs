@@ -1,7 +1,6 @@
-using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
+using System.Threading.Tasks;
 using Nop.Core.Domain.Catalog;
-using Nop.Core.Domain.Common;
 using Nop.Core.Domain.Customers;
 using Nop.Core.Domain.Orders;
 using Nop.Core.Domain.Tax;
@@ -13,39 +12,18 @@ namespace Nop.Services.Tax
     /// </summary>
     public partial interface ITaxService
     {
-        /// <summary>
-        /// Load active tax provider
-        /// </summary>
-        /// <returns>Active tax provider</returns>
-        ITaxProvider LoadActiveTaxProvider();
-
-        /// <summary>
-        /// Load tax provider by system name
-        /// </summary>
-        /// <param name="systemName">System name</param>
-        /// <returns>Found tax provider</returns>
-        ITaxProvider LoadTaxProviderBySystemName(string systemName);
-
-        /// <summary>
-        /// Load all tax providers
-        /// </summary>
-        /// <returns>Tax providers</returns>
-        IList<ITaxProvider> LoadAllTaxProviders();
-        
-
-
-
-
+        #region Product price
 
         /// <summary>
         /// Gets price
         /// </summary>
         /// <param name="product">Product</param>
         /// <param name="price">Price</param>
-        /// <param name="taxRate">Tax rate</param>
-        /// <returns>Price</returns>
-        decimal GetProductPrice(Product product, decimal price,
-            out decimal taxRate);
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the price. Tax rate
+        /// </returns>
+        Task<(decimal price, decimal taxRate)> GetProductPriceAsync(Product product, decimal price);
 
         /// <summary>
         /// Gets price
@@ -53,10 +31,11 @@ namespace Nop.Services.Tax
         /// <param name="product">Product</param>
         /// <param name="price">Price</param>
         /// <param name="customer">Customer</param>
-        /// <param name="taxRate">Tax rate</param>
-        /// <returns>Price</returns>
-        decimal GetProductPrice(Product product, decimal price,
-            Customer customer, out decimal taxRate);
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the price. Tax rate
+        /// </returns>
+        Task<(decimal price, decimal taxRate)> GetProductPriceAsync(Product product, decimal price, Customer customer);
 
         /// <summary>
         /// Gets price
@@ -65,10 +44,12 @@ namespace Nop.Services.Tax
         /// <param name="price">Price</param>
         /// <param name="includingTax">A value indicating whether calculated price should include tax</param>
         /// <param name="customer">Customer</param>
-        /// <param name="taxRate">Tax rate</param>
-        /// <returns>Price</returns>
-        decimal GetProductPrice(Product product, decimal price,
-            bool includingTax, Customer customer, out decimal taxRate);
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the price. Tax rate
+        /// </returns>
+        Task<(decimal price, decimal taxRate)> GetProductPriceAsync(Product product, decimal price,
+            bool includingTax, Customer customer);
 
         /// <summary>
         /// Gets price
@@ -79,185 +60,149 @@ namespace Nop.Services.Tax
         /// <param name="includingTax">A value indicating whether calculated price should include tax</param>
         /// <param name="customer">Customer</param>
         /// <param name="priceIncludesTax">A value indicating whether price already includes tax</param>
-        /// <param name="taxRate">Tax rate</param>
-        /// <returns>Price</returns>
-        decimal GetProductPrice(Product product, int taxCategoryId, decimal price,
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the price. Tax rate
+        /// </returns>
+        Task<(decimal price, decimal taxRate)> GetProductPriceAsync(Product product, int taxCategoryId, decimal price,
             bool includingTax, Customer customer,
-            bool priceIncludesTax, out decimal taxRate);
-
-
-
-
-        /// <summary>
-        /// Gets shipping price
-        /// </summary>
-        /// <param name="price">Price</param>
-        /// <param name="customer">Customer</param>
-        /// <returns>Price</returns>
-        decimal GetShippingPrice(decimal price, Customer customer);
-
-        /// <summary>
-        /// Gets shipping price
-        /// </summary>
-        /// <param name="price">Price</param>
-        /// <param name="includingTax">A value indicating whether calculated price should include tax</param>
-        /// <param name="customer">Customer</param>
-        /// <returns>Price</returns>
-        decimal GetShippingPrice(decimal price, bool includingTax, Customer customer);
-
-        /// <summary>
-        /// Gets shipping price
-        /// </summary>
-        /// <param name="price">Price</param>
-        /// <param name="includingTax">A value indicating whether calculated price should include tax</param>
-        /// <param name="customer">Customer</param>
-        /// <param name="taxRate">Tax rate</param>
-        /// <returns>Price</returns>
-        decimal GetShippingPrice(decimal price, bool includingTax, Customer customer, out decimal taxRate);
-
-
-
-
-
-        /// <summary>
-        /// Gets payment method additional handling fee
-        /// </summary>
-        /// <param name="price">Price</param>
-        /// <param name="customer">Customer</param>
-        /// <returns>Price</returns>
-        decimal GetPaymentMethodAdditionalFee(decimal price, Customer customer);
-
-        /// <summary>
-        /// Gets payment method additional handling fee
-        /// </summary>
-        /// <param name="price">Price</param>
-        /// <param name="includingTax">A value indicating whether calculated price should include tax</param>
-        /// <param name="customer">Customer</param>
-        /// <returns>Price</returns>
-        decimal GetPaymentMethodAdditionalFee(decimal price, bool includingTax, Customer customer);
-
-        /// <summary>
-        /// Gets payment method additional handling fee
-        /// </summary>
-        /// <param name="price">Price</param>
-        /// <param name="includingTax">A value indicating whether calculated price should include tax</param>
-        /// <param name="customer">Customer</param>
-        /// <param name="taxRate">Tax rate</param>
-        /// <returns>Price</returns>
-        decimal GetPaymentMethodAdditionalFee(decimal price, bool includingTax, Customer customer, out decimal taxRate);
-
-
-
-
-
-
-
-        /// <summary>
-        /// Gets checkout attribute value price
-        /// </summary>
-        /// <param name="cav">Checkout attribute value</param>
-        /// <returns>Price</returns>
-        decimal GetCheckoutAttributePrice(CheckoutAttributeValue cav);
-
-        /// <summary>
-        /// Gets checkout attribute value price
-        /// </summary>
-        /// <param name="cav">Checkout attribute value</param>
-        /// <param name="customer">Customer</param>
-        /// <returns>Price</returns>
-        decimal GetCheckoutAttributePrice(CheckoutAttributeValue cav, Customer customer);
-
-        /// <summary>
-        /// Gets checkout attribute value price
-        /// </summary>
-        /// <param name="cav">Checkout attribute value</param>
-        /// <param name="includingTax">A value indicating whether calculated price should include tax</param>
-        /// <param name="customer">Customer</param>
-        /// <returns>Price</returns>
-        decimal GetCheckoutAttributePrice(CheckoutAttributeValue cav,
-            bool includingTax, Customer customer);
-
-        /// <summary>
-        /// Gets checkout attribute value price
-        /// </summary>
-        /// <param name="cav">Checkout attribute value</param>
-        /// <param name="includingTax">A value indicating whether calculated price should include tax</param>
-        /// <param name="customer">Customer</param>
-        /// <param name="taxRate">Tax rate</param>
-        /// <returns>Price</returns>
-        decimal GetCheckoutAttributePrice(CheckoutAttributeValue cav,
-            bool includingTax, Customer customer, out decimal taxRate);
-
-
-
-
-        
-
-        /// <summary>
-        /// Gets VAT Number status
-        /// </summary>
-        /// <param name="fullVatNumber">Two letter ISO code of a country and VAT number (e.g. GB 111 1111 111)</param>
-        /// <returns>VAT Number status</returns>
-        VatNumberStatus GetVatNumberStatus(string fullVatNumber);
-
-        /// <summary>
-        /// Gets VAT Number status
-        /// </summary>
-        /// <param name="fullVatNumber">Two letter ISO code of a country and VAT number (e.g. GB 111 1111 111)</param>
-        /// <param name="name">Name (if received)</param>
-        /// <param name="address">Address (if received)</param>
-        /// <returns>VAT Number status</returns>
-        VatNumberStatus GetVatNumberStatus(string fullVatNumber,
-            out string name, out string address);
-        /// <summary>
-        /// Gets VAT Number status
-        /// </summary>
-        /// <param name="twoLetterIsoCode">Two letter ISO code of a country</param>
-        /// <param name="vatNumber">VAT number</param>
-        /// <returns>VAT Number status</returns>
-        VatNumberStatus GetVatNumberStatus(string twoLetterIsoCode, string vatNumber);
-        
-        /// <summary>
-        /// Gets VAT Number status
-        /// </summary>
-        /// <param name="twoLetterIsoCode">Two letter ISO code of a country</param>
-        /// <param name="vatNumber">VAT number</param>
-        /// <param name="name">Name (if received)</param>
-        /// <param name="address">Address (if received)</param>
-        /// <returns>VAT Number status</returns>
-        VatNumberStatus GetVatNumberStatus(string twoLetterIsoCode, string vatNumber, 
-            out string name, out string address);
-
-        /// <summary>
-        /// Performs a basic check of a VAT number for validity
-        /// </summary>
-        /// <param name="twoLetterIsoCode">Two letter ISO code of a country</param>
-        /// <param name="vatNumber">VAT number</param>
-        /// <param name="name">Company name</param>
-        /// <param name="address">Address</param>
-        /// <param name="exception">Exception</param>
-        /// <returns>VAT number status</returns>
-        VatNumberStatus DoVatCheck(string twoLetterIsoCode, string vatNumber, 
-            out string name, out string address, out Exception exception);
-
-
-
-
+            bool priceIncludesTax);
 
         /// <summary>
         /// Gets a value indicating whether a product is tax exempt
         /// </summary>
         /// <param name="product">Product</param>
         /// <param name="customer">Customer</param>
-        /// <returns>A value indicating whether a product is tax exempt</returns>
-        bool IsTaxExempt(Product product, Customer customer);
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains a value indicating whether a product is tax exempt
+        /// </returns>
+        Task<bool> IsTaxExemptAsync(Product product, Customer customer);
+
+        #endregion
+
+        #region Shipping price
 
         /// <summary>
-        /// Gets a value indicating whether EU VAT exempt (the European Union Value Added Tax)
+        /// Gets shipping price
         /// </summary>
-        /// <param name="address">Address</param>
+        /// <param name="price">Price</param>
         /// <param name="customer">Customer</param>
-        /// <returns>Result</returns>
-        bool IsVatExempt(Address address, Customer customer);
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the price. Tax rate
+        /// </returns>
+        Task<(decimal price, decimal taxRate)> GetShippingPriceAsync(decimal price, Customer customer);
+
+        /// <summary>
+        /// Gets shipping price
+        /// </summary>
+        /// <param name="price">Price</param>
+        /// <param name="includingTax">A value indicating whether calculated price should include tax</param>
+        /// <param name="customer">Customer</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the price. Tax rate
+        /// </returns>
+        Task<(decimal price, decimal taxRate)> GetShippingPriceAsync(decimal price, bool includingTax, Customer customer);
+
+        #endregion
+
+        #region Payment additional fee
+
+        /// <summary>
+        /// Gets payment method additional handling fee
+        /// </summary>
+        /// <param name="price">Price</param>
+        /// <param name="customer">Customer</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the price. Tax rate
+        /// </returns>
+        Task<(decimal price, decimal taxRate)> GetPaymentMethodAdditionalFeeAsync(decimal price, Customer customer);
+
+        /// <summary>
+        /// Gets payment method additional handling fee
+        /// </summary>
+        /// <param name="price">Price</param>
+        /// <param name="includingTax">A value indicating whether calculated price should include tax</param>
+        /// <param name="customer">Customer</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the price. Tax rate
+        /// </returns>
+        Task<(decimal price, decimal taxRate)> GetPaymentMethodAdditionalFeeAsync(decimal price, bool includingTax, Customer customer);
+
+        #endregion
+
+        #region Checkout attribute price
+
+        /// <summary>
+        /// Gets checkout attribute value price
+        /// </summary>
+        /// <param name="ca">Checkout attribute</param>
+        /// <param name="cav">Checkout attribute value</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the price. Tax rate
+        /// </returns>
+        Task<(decimal price, decimal taxRate)> GetCheckoutAttributePriceAsync(CheckoutAttribute ca, CheckoutAttributeValue cav);
+
+        /// <summary>
+        /// Gets checkout attribute value price
+        /// </summary>
+        /// <param name="ca">Checkout attribute</param>
+        /// <param name="cav">Checkout attribute value</param>
+        /// <param name="customer">Customer</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the price. Tax rate
+        /// </returns>
+        Task<(decimal price, decimal taxRate)> GetCheckoutAttributePriceAsync(CheckoutAttribute ca, CheckoutAttributeValue cav, Customer customer);
+
+        /// <summary>
+        /// Gets checkout attribute value price
+        /// </summary>
+        /// <param name="ca">Checkout attribute</param>
+        /// <param name="cav">Checkout attribute value</param>
+        /// <param name="includingTax">A value indicating whether calculated price should include tax</param>
+        /// <param name="customer">Customer</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the price. Tax rate
+        /// </returns>
+        Task<(decimal price, decimal taxRate)> GetCheckoutAttributePriceAsync(CheckoutAttribute ca, CheckoutAttributeValue cav,
+            bool includingTax, Customer customer);
+
+        #endregion
+
+        #region VAT
+
+        /// <summary>
+        /// Gets VAT Number status
+        /// </summary>
+        /// <param name="fullVatNumber">Two letter ISO code of a country and VAT number (e.g. GB 111 1111 111)</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the vAT Number status
+        /// </returns>
+        Task<(VatNumberStatus vatNumberStatus, string name, string address)> GetVatNumberStatusAsync(string fullVatNumber);
+
+        #endregion
+
+        #region Tax total
+
+        /// <summary>
+        /// Get tax total for the passed shopping cart
+        /// </summary>
+        /// <param name="cart">Shopping cart</param>
+        /// <param name="usePaymentMethodAdditionalFee">A value indicating whether we should use payment method additional fee when calculating tax</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the result
+        /// </returns>
+        Task<TaxTotalResult> GetTaxTotalAsync(IList<ShoppingCartItem> cart, bool usePaymentMethodAdditionalFee = true);
+
+        #endregion
     }
 }

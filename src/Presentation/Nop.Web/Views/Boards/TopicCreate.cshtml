@@ -1,8 +1,11 @@
 ﻿@model EditForumTopicModel
-@using Nop.Web.Models.Boards;
 @{    
-    Layout = "~/Views/Shared/_ColumnsOne.cshtml";
+    Layout = "_ColumnsOne";
 
-    Html.AddTitleParts(T("Forum.PageTitle.TopicNew").Text);    
+    NopHtml.AddTitleParts(T("Forum.PageTitle.TopicNew").Text);
 }
-@Html.Partial("_CreateUpdateTopic", Model)
+@await Component.InvokeAsync(typeof(WidgetViewComponent), new { widgetZone = PublicWidgetZones.BoardsTopicCreateBefore, additionalData = Model })
+<form asp-route="TopicCreate" method="post">
+    @await Html.PartialAsync("_CreateUpdateTopic", Model)
+</form>
+@await Component.InvokeAsync(typeof(WidgetViewComponent), new { widgetZone = PublicWidgetZones.BoardsTopicCreateAfter, additionalData = Model })

@@ -1,10 +1,11 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Nop.Core;
-using Nop.Core.Data;
+using Nop.Core.Domain.Catalog;
 using Nop.Core.Domain.Orders;
-using Nop.Services.Events;
+using Nop.Data;
 
 namespace Nop.Services.Orders
 {
@@ -18,28 +19,24 @@ namespace Nop.Services.Orders
         private readonly IRepository<ReturnRequest> _returnRequestRepository;
         private readonly IRepository<ReturnRequestAction> _returnRequestActionRepository;
         private readonly IRepository<ReturnRequestReason> _returnRequestReasonRepository;
-        private readonly IEventPublisher _eventPublisher;
+        private readonly IRepository<OrderItem> _orderItemRepository;
+        private readonly IRepository<Product> _productRepository;
 
         #endregion
 
         #region Ctor
 
-        /// <summary>
-        /// Ctor
-        /// </summary>
-        /// <param name="returnRequestRepository">Return request repository</param>
-        /// <param name="returnRequestActionRepository">Return request action repository</param>
-        /// <param name="returnRequestReasonRepository">Return request reason repository</param>
-        /// <param name="eventPublisher">Event published</param>
         public ReturnRequestService(IRepository<ReturnRequest> returnRequestRepository,
             IRepository<ReturnRequestAction> returnRequestActionRepository,
             IRepository<ReturnRequestReason> returnRequestReasonRepository,
-            IEventPublisher eventPublisher)
+            IRepository<OrderItem> orderItemRepository,
+            IRepository<Product> productRepository)
         {
-            this._returnRequestRepository = returnRequestRepository;
-            this._returnRequestActionRepository = returnRequestActionRepository;
-            this._returnRequestReasonRepository = returnRequestReasonRepository;
-            this._eventPublisher = eventPublisher;
+            _returnRequestRepository = returnRequestRepository;
+            _returnRequestActionRepository = returnRequestActionRepository;
+            _returnRequestReasonRepository = returnRequestReasonRepository;
+            _orderItemRepository = orderItemRepository;
+            _productRepository = productRepository;
         }
 
         #endregion
@@ -50,43 +47,45 @@ namespace Nop.Services.Orders
         /// Deletes a return request
         /// </summary>
         /// <param name="returnRequest">Return request</param>
-        public virtual void DeleteReturnRequest(ReturnRequest returnRequest)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteReturnRequestAsync(ReturnRequest returnRequest)
         {
-            if (returnRequest == null)
-                throw new ArgumentNullException("returnRequest");
-
-            _returnRequestRepository.Delete(returnRequest);
-
-            //event notification
-            _eventPublisher.EntityDeleted(returnRequest);
+            await _returnRequestRepository.DeleteAsync(returnRequest);
         }
 
         /// <summary>
         /// Gets a return request
         /// </summary>
         /// <param name="returnRequestId">Return request identifier</param>
-        /// <returns>Return request</returns>
-        public virtual ReturnRequest GetReturnRequestById(int returnRequestId)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the return request
+        /// </returns>
+        public virtual async Task<ReturnRequest> GetReturnRequestByIdAsync(int returnRequestId)
         {
-            if (returnRequestId == 0)
-                return null;
-
-            return _returnRequestRepository.GetById(returnRequestId);
+            return await _returnRequestRepository.GetByIdAsync(returnRequestId);
         }
 
         /// <summary>
         /// Search return requests
         /// </summary>
         /// <param name="storeId">Store identifier; 0 to load all entries</param>
-        /// <param name="customerId">Customer identifier; null to load all entries</param>
+        /// <param name="customerId">Customer identifier; 0 to load all entries</param>
         /// <param name="orderItemId">Order item identifier; 0 to load all entries</param>
+        /// <param name="customNumber">Custom number; null or empty to load all entries</param>
         /// <param name="rs">Return request status; null to load all entries</param>
+        /// <param name="createdFromUtc">Created date from (UTC); null to load all records</param>
+        /// <param name="createdToUtc">Created date to (UTC); null to load all records</param>
         /// <param name="pageIndex">Page index</param>
         /// <param name="pageSize">Page size</param>
-        /// <returns>Return requests</returns>
-        public virtual IPagedList<ReturnRequest> SearchReturnRequests(int storeId = 0, int customerId = 0,
-            int orderItemId = 0, ReturnRequestStatus? rs = null,
-            int pageIndex = 0, int pageSize = int.MaxValue)
+        /// <param name="getOnlyTotalCount">A value in indicating whether you want to load only total number of records. Set to "true" if you don't want to load data from database</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the return requests
+        /// </returns>
+        public virtual async Task<IPagedList<ReturnRequest>> SearchReturnRequestsAsync(int storeId = 0, int customerId = 0,
+            int orderItemId = 0, string customNumber = "", ReturnRequestStatus? rs = null, DateTime? createdFromUtc = null,
+            DateTime? createdToUtc = null, int pageIndex = 0, int pageSize = int.MaxValue, bool getOnlyTotalCount = false)
         {
             var query = _returnRequestRepository.Table;
             if (storeId > 0)
@@ -98,158 +97,211 @@ namespace Nop.Services.Orders
                 var returnStatusId = (int)rs.Value;
                 query = query.Where(rr => rr.ReturnRequestStatusId == returnStatusId);
             }
+
             if (orderItemId > 0)
                 query = query.Where(rr => rr.OrderItemId == orderItemId);
 
-            query = query.OrderByDescending(rr => rr.CreatedOnUtc).ThenByDescending(rr=>rr.Id);
+            if (!string.IsNullOrEmpty(customNumber))
+                query = query.Where(rr => rr.CustomNumber == customNumber);
 
-            var returnRequests = new PagedList<ReturnRequest>(query, pageIndex, pageSize);
+            if (createdFromUtc.HasValue)
+                query = query.Where(rr => createdFromUtc.Value <= rr.CreatedOnUtc);
+            if (createdToUtc.HasValue)
+                query = query.Where(rr => createdToUtc.Value >= rr.CreatedOnUtc);
+
+            query = query.OrderByDescending(rr => rr.CreatedOnUtc).ThenByDescending(rr => rr.Id);
+
+            var returnRequests = await query.ToPagedListAsync(pageIndex, pageSize, getOnlyTotalCount);
+
             return returnRequests;
         }
 
+        /// <summary>
+        /// Gets the return request availability
+        /// </summary>
+        /// <param name="orderId">The order identifier</param>
+        /// <returns>The <see cref="Task"/> containing the <see cref="ReturnRequestAvailability"/></returns>
+        public virtual async Task<ReturnRequestAvailability> GetReturnRequestAvailabilityAsync(int orderId)
+        {
+            var result = new ReturnRequestAvailability();
 
-        
+            if (orderId > 0)
+            {
+                var cancelledStatusId = (int)ReturnRequestStatus.Cancelled;
+                var requestedOrderItemsForReturn =
+                    from rr in _returnRequestRepository.Table
+                    where rr.ReturnRequestStatusId != cancelledStatusId
+                    group rr by new
+                    {
+                        rr.OrderItemId,
+                        rr.Quantity
+                    } into g
+                    select new
+                    {
+                        OrderItemId = g.Key.OrderItemId,
+                        RequestedQuantityForReturn = g.Sum(rr => rr.Quantity)
+                    };
+
+                var query =
+                    from oi in _orderItemRepository.Table
+                    join roi in requestedOrderItemsForReturn
+                        on oi.Id equals roi.OrderItemId into alreadyRequestedForReturn
+                    from aroi in alreadyRequestedForReturn.DefaultIfEmpty()
+                    join p in _productRepository.Table
+                        on oi.ProductId equals p.Id
+                    where !p.NotReturnable && oi.OrderId == orderId
+                    select new ReturnableOrderItem
+                    {
+                        AvailableQuantityForReturn = aroi != null
+                            ? Math.Max(oi.Quantity - aroi.RequestedQuantityForReturn, 0)
+                            : oi.Quantity,
+                        OrderItem = oi
+                    };
+
+                result.ReturnableOrderItems = await query.ToListAsync();
+            }
+
+            return result;
+        }
+
         /// <summary>
         /// Delete a return request action
         /// </summary>
         /// <param name="returnRequestAction">Return request action</param>
-        public virtual void DeleteReturnRequestAction(ReturnRequestAction returnRequestAction)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteReturnRequestActionAsync(ReturnRequestAction returnRequestAction)
         {
-            if (returnRequestAction == null)
-                throw new ArgumentNullException("returnRequestAction");
-
-            _returnRequestActionRepository.Delete(returnRequestAction);
-
-            //event notification
-            _eventPublisher.EntityDeleted(returnRequestAction);
+            await _returnRequestActionRepository.DeleteAsync(returnRequestAction);
         }
 
         /// <summary>
         /// Gets all return request actions
         /// </summary>
-        /// <returns>Return request actions</returns>
-        public virtual IList<ReturnRequestAction> GetAllReturnRequestActions()
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the return request actions
+        /// </returns>
+        public virtual async Task<IList<ReturnRequestAction>> GetAllReturnRequestActionsAsync()
         {
-            var query = from rra in _returnRequestActionRepository.Table
-                orderby rra.DisplayOrder, rra.Id
-                select rra;
-            return query.ToList();
+            return await _returnRequestActionRepository.GetAllAsync(query =>
+            {
+                return from rra in query
+                    orderby rra.DisplayOrder, rra.Id
+                    select rra;
+            }, cache => default);
         }
 
         /// <summary>
         /// Gets a return request action
         /// </summary>
         /// <param name="returnRequestActionId">Return request action identifier</param>
-        /// <returns>Return request action</returns>
-        public virtual ReturnRequestAction GetReturnRequestActionById(int returnRequestActionId)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the return request action
+        /// </returns>
+        public virtual async Task<ReturnRequestAction> GetReturnRequestActionByIdAsync(int returnRequestActionId)
         {
-            if (returnRequestActionId == 0)
-                return null;
-            
-            return _returnRequestActionRepository.GetById(returnRequestActionId);
+            return await _returnRequestActionRepository.GetByIdAsync(returnRequestActionId, cache => default);
+        }
+
+        /// <summary>
+        /// Inserts a return request
+        /// </summary>
+        /// <param name="returnRequest">Return request</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task InsertReturnRequestAsync(ReturnRequest returnRequest)
+        {
+            await _returnRequestRepository.InsertAsync(returnRequest);
         }
 
         /// <summary>
         /// Inserts a return request action
         /// </summary>
         /// <param name="returnRequestAction">Return request action</param>
-        public virtual void InsertReturnRequestAction(ReturnRequestAction returnRequestAction)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task InsertReturnRequestActionAsync(ReturnRequestAction returnRequestAction)
         {
-            if (returnRequestAction == null)
-                throw new ArgumentNullException("returnRequestAction");
-
-            _returnRequestActionRepository.Insert(returnRequestAction);
-
-            //event notification
-            _eventPublisher.EntityInserted(returnRequestAction);
+            await _returnRequestActionRepository.InsertAsync(returnRequestAction);
         }
 
         /// <summary>
-        /// Updates the  return request action
+        /// Updates the return request
+        /// </summary>
+        /// <param name="returnRequest">Return request</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateReturnRequestAsync(ReturnRequest returnRequest)
+        {
+            await _returnRequestRepository.UpdateAsync(returnRequest);
+        }
+
+        /// <summary>
+        /// Updates the return request action
         /// </summary>
         /// <param name="returnRequestAction">Return request action</param>
-        public virtual void UpdateReturnRequestAction(ReturnRequestAction returnRequestAction)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateReturnRequestActionAsync(ReturnRequestAction returnRequestAction)
         {
-            if (returnRequestAction == null)
-                throw new ArgumentNullException("returnRequestAction");
-
-            _returnRequestActionRepository.Update(returnRequestAction);
-
-            //event notification
-            _eventPublisher.EntityUpdated(returnRequestAction);
+            await _returnRequestActionRepository.UpdateAsync(returnRequestAction);
         }
 
-
-        
-
         /// <summary>
-        /// Delete a return request reaspn
+        /// Delete a return request reason
         /// </summary>
         /// <param name="returnRequestReason">Return request reason</param>
-        public virtual void DeleteReturnRequestReason(ReturnRequestReason returnRequestReason)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteReturnRequestReasonAsync(ReturnRequestReason returnRequestReason)
         {
-            if (returnRequestReason == null)
-                throw new ArgumentNullException("returnRequestReason");
-
-            _returnRequestReasonRepository.Delete(returnRequestReason);
-
-            //event notification
-            _eventPublisher.EntityDeleted(returnRequestReason);
+            await _returnRequestReasonRepository.DeleteAsync(returnRequestReason);
         }
 
         /// <summary>
-        /// Gets all return request reaspns
+        /// Gets all return request reasons
         /// </summary>
-        /// <returns>Return request reaspns</returns>
-        public virtual IList<ReturnRequestReason> GetAllReturnRequestReasons()
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the return request reasons
+        /// </returns>
+        public virtual async Task<IList<ReturnRequestReason>> GetAllReturnRequestReasonsAsync()
         {
-            var query = from rra in _returnRequestReasonRepository.Table
-                orderby rra.DisplayOrder, rra.Id
-                select rra;
-            return query.ToList();
+            return await _returnRequestReasonRepository.GetAllAsync(query =>
+            {
+                return from rra in query
+                    orderby rra.DisplayOrder, rra.Id
+                    select rra;
+            }, cache => default);
         }
 
         /// <summary>
-        /// Gets a return request reaspn
+        /// Gets a return request reason
         /// </summary>
-        /// <param name="returnRequestReasonId">Return request reaspn identifier</param>
-        /// <returns>Return request reaspn</returns>
-        public virtual ReturnRequestReason GetReturnRequestReasonById(int returnRequestReasonId)
+        /// <param name="returnRequestReasonId">Return request reason identifier</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the return request reason
+        /// </returns>
+        public virtual async Task<ReturnRequestReason> GetReturnRequestReasonByIdAsync(int returnRequestReasonId)
         {
-            if (returnRequestReasonId == 0)
-                return null;
-
-            return _returnRequestReasonRepository.GetById(returnRequestReasonId);
+            return await _returnRequestReasonRepository.GetByIdAsync(returnRequestReasonId, cache => default);
         }
 
         /// <summary>
-        /// Inserts a return request reaspn
+        /// Inserts a return request reason
         /// </summary>
-        /// <param name="returnRequestReason">Return request reaspn</param>
-        public virtual void InsertReturnRequestReason(ReturnRequestReason returnRequestReason)
+        /// <param name="returnRequestReason">Return request reason</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task InsertReturnRequestReasonAsync(ReturnRequestReason returnRequestReason)
         {
-            if (returnRequestReason == null)
-                throw new ArgumentNullException("returnRequestReason");
-
-            _returnRequestReasonRepository.Insert(returnRequestReason);
-
-            //event notification
-            _eventPublisher.EntityInserted(returnRequestReason);
+            await _returnRequestReasonRepository.InsertAsync(returnRequestReason);
         }
 
         /// <summary>
-        /// Updates the  return request reaspn
+        /// Updates the  return request reason
         /// </summary>
-        /// <param name="returnRequestReason">Return request reaspn</param>
-        public virtual void UpdateReturnRequestReason(ReturnRequestReason returnRequestReason)
+        /// <param name="returnRequestReason">Return request reason</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateReturnRequestReasonAsync(ReturnRequestReason returnRequestReason)
         {
-            if (returnRequestReason == null)
-                throw new ArgumentNullException("returnRequestReason");
-
-            _returnRequestReasonRepository.Update(returnRequestReason);
-
-            //event notification
-            _eventPublisher.EntityUpdated(returnRequestReason);
+            await _returnRequestReasonRepository.UpdateAsync(returnRequestReason);
         }
 
         #endregion

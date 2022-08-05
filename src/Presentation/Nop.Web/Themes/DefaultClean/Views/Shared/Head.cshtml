@@ -1,33 +1,26 @@
-﻿@using Nop.Core;
-@using Nop.Core.Infrastructure
-@using Nop.Web.Framework.Themes
+﻿@using Nop.Core
+@using Nop.Core.Domain.Catalog
+@using Nop.Services.Helpers
 @using Nop.Web.Framework.UI
-@{  
-    var supportRtl = EngineContext.Current.Resolve<IWorkContext>().WorkingLanguage.Rtl;
-    var themeName = EngineContext.Current.Resolve<IThemeContext>().WorkingThemeName;
 
-    //add browser specific CSS files
-    var browser = Request.Browser;
-    if (browser.Browser == "IE" && browser.MajorVersion == 8)
-    {
-        Html.AppendCssFileParts(string.Format("~/Themes/{0}/Content/css/ie8.css", themeName));
-    }
+@inject CatalogSettings catalogSettings
+@inject IThemeContext themeContext
+@inject IUserAgentHelper userAgentHelper
+
+@{
+    Layout ="";
+    var themeName = await themeContext.GetWorkingThemeNameAsync();
+    var supportRtl = await Html.ShouldUseRtlThemeAsync();
+
     //add main CSS file
-    if (supportRtl)
-    {
-        Html.AppendCssFileParts(string.Format("~/Themes/{0}/Content/css/styles.rtl.css", themeName));
-    }
-    else
-    {
-        Html.AppendCssFileParts(string.Format("~/Themes/{0}/Content/css/styles.css", themeName));
-    }
+    NopHtml.AppendCssFileParts($"~/Themes/{themeName}/Content/css/styles{(supportRtl ? ".rtl" : "")}.css");
     
-    //add jQuery UI css file
-    Html.AppendCssFileParts("~/Content/jquery-ui-themes/smoothness/jquery-ui-1.10.3.custom.min.css");
-
-    if (browser.Browser == "IE" && browser.MajorVersion == 8)
+    //add swiper css file
+    if (catalogSettings.DisplayAllPicturesOnCatalogPages)
     {
-        Html.AddScriptParts("~/Scripts/selectivizr.min.js");
-        Html.AddScriptParts("~/Scripts/respond.min.js");
+        NopHtml.AppendCssFileParts("~/lib_npm/swiper/swiper-bundle.min.css");
     }
+
+    //add jQuery UI css file
+    NopHtml.AppendCssFileParts("~/lib_npm/jquery-ui-dist/jquery-ui.min.css");
 }

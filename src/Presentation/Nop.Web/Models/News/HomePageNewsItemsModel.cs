@@ -1,23 +1,16 @@
-﻿using System;
-using System.Collections.Generic;
-using Nop.Web.Framework.Mvc;
+﻿using System.Collections.Generic;
+using Nop.Web.Framework.Models;
 
 namespace Nop.Web.Models.News
 {
-    public partial class HomePageNewsItemsModel : BaseNopModel, ICloneable
+    public partial record HomepageNewsItemsModel : BaseNopModel
     {
-        public HomePageNewsItemsModel()
+        public HomepageNewsItemsModel()
         {
             NewsItems = new List<NewsItemModel>();
         }
 
         public int WorkingLanguageId { get; set; }
         public IList<NewsItemModel> NewsItems { get; set; }
-
-        public object Clone()
-        {
-            //we use a shallow copy (deep clone is not required here)
-            return this.MemberwiseClone();
-        }
     }
 }

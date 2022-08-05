@@ -1,4 +1,6 @@
-﻿namespace Nop.Core.Infrastructure
+﻿using System.Threading.Tasks;
+
+namespace Nop.Core.Infrastructure
 {
     /// <summary>
     /// Interface which should be implemented by tasks run on startup
@@ -8,10 +10,11 @@
         /// <summary>
         /// Executes a task
         /// </summary>
-        void Execute();
+        /// <returns>A task that represents the asynchronous operation</returns>
+        Task ExecuteAsync();
 
         /// <summary>
-        /// Order
+        /// Gets order of this startup task implementation
         /// </summary>
         int Order { get; }
     }

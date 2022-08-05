@@ -1,12 +1,11 @@
-﻿using System.Web.Routing;
-using Nop.Web.Framework.Mvc;
+﻿using System;
+using Nop.Web.Framework.Models;
 
 namespace Nop.Web.Models.Cms
 {
-    public partial class RenderWidgetModel : BaseNopModel
+    public partial record RenderWidgetModel : BaseNopModel
     {
-        public string ActionName { get; set; }
-        public string ControllerName { get; set; }
-        public RouteValueDictionary RouteValues { get; set; }
+        public Type WidgetViewComponent { get; set; }
+        public object WidgetViewComponentArguments { get; set; }
     }
 }

@@ -1,3 +1,4 @@
+﻿using System.Threading.Tasks;
 using Nop.Core.Domain.Customers;
 
 namespace Nop.Services.Authentication
@@ -11,18 +12,23 @@ namespace Nop.Services.Authentication
         /// Sign in
         /// </summary>
         /// <param name="customer">Customer</param>
-        /// <param name="createPersistentCookie">A value indicating whether to create a persistent cookie</param>
-        void SignIn(Customer customer, bool createPersistentCookie);
+        /// <param name="isPersistent">Whether the authentication session is persisted across multiple requests</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        Task SignInAsync(Customer customer, bool isPersistent);
 
         /// <summary>
         /// Sign out
         /// </summary>
-        void SignOut();
+        /// <returns>A task that represents the asynchronous operation</returns>
+        Task SignOutAsync();
 
         /// <summary>
         /// Get authenticated customer
         /// </summary>
-        /// <returns>Customer</returns>
-        Customer GetAuthenticatedCustomer();
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the customer
+        /// </returns>
+        Task<Customer> GetAuthenticatedCustomerAsync();
     }
 }

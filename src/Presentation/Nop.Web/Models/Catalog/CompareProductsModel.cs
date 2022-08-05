@@ -1,9 +1,9 @@
 ﻿using System.Collections.Generic;
-using Nop.Web.Framework.Mvc;
+using Nop.Web.Framework.Models;
 
 namespace Nop.Web.Models.Catalog
 {
-    public partial class CompareProductsModel : BaseNopEntityModel
+    public partial record CompareProductsModel : BaseNopEntityModel
     {
         public CompareProductsModel()
         {

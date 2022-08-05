@@ -1,88 +1,119 @@
 ﻿using System;
 using System.Linq;
+using System.Threading.Tasks;
 using Nop.Core;
 using Nop.Core.Domain;
 using Nop.Core.Domain.Customers;
 using Nop.Services.Common;
+using Nop.Services.Themes;
 
 namespace Nop.Web.Framework.Themes
 {
     /// <summary>
-    /// Theme context
+    /// Represents the theme context implementation
     /// </summary>
     public partial class ThemeContext : IThemeContext
     {
-        private readonly IWorkContext _workContext;
-        private readonly IStoreContext _storeContext;
-        private readonly IGenericAttributeService _genericAttributeService;
-        private readonly StoreInformationSettings _storeInformationSettings;
-        private readonly IThemeProvider _themeProvider;
+        #region Fields
 
-        private bool _themeIsCached;
+        private readonly IGenericAttributeService _genericAttributeService;
+        private readonly IStoreContext _storeContext;
+        private readonly IThemeProvider _themeProvider;
+        private readonly IWorkContext _workContext;
+        private readonly StoreInformationSettings _storeInformationSettings;
+
         private string _cachedThemeName;
 
-        public ThemeContext(IWorkContext workContext,
+        #endregion
+
+        #region Ctor
+
+        /// <summary>
+        /// Ctor
+        /// </summary>
+        /// <param name="genericAttributeService">Generic attribute service</param>
+        /// <param name="storeContext">Store context</param>
+        /// <param name="themeProvider">Theme provider</param>
+        /// <param name="workContext">Work context</param>
+        /// <param name="storeInformationSettings">Store information settings</param>
+        public ThemeContext(IGenericAttributeService genericAttributeService,
             IStoreContext storeContext,
-            IGenericAttributeService genericAttributeService, 
-            StoreInformationSettings storeInformationSettings, 
-            IThemeProvider themeProvider)
+            IThemeProvider themeProvider,
+            IWorkContext workContext,
+            StoreInformationSettings storeInformationSettings)
         {
-            this._workContext = workContext;
-            this._storeContext = storeContext;
-            this._genericAttributeService = genericAttributeService;
-            this._storeInformationSettings = storeInformationSettings;
-            this._themeProvider = themeProvider;
+            _genericAttributeService = genericAttributeService;
+            _storeContext = storeContext;
+            _themeProvider = themeProvider;
+            _workContext = workContext;
+            _storeInformationSettings = storeInformationSettings;
         }
+
+        #endregion
+
+        #region Properties
 
         /// <summary>
         /// Get or set current theme system name
         /// </summary>
-        public string WorkingThemeName
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task<string> GetWorkingThemeNameAsync()
         {
-            get
+            if (!string.IsNullOrEmpty(_cachedThemeName))
+                return _cachedThemeName;
+
+            var themeName = string.Empty;
+
+            //whether customers are allowed to select a theme
+            var customer = await _workContext.GetCurrentCustomerAsync();
+            if (_storeInformationSettings.AllowCustomerToSelectTheme &&
+                customer != null)
             {
-                if (_themeIsCached)
-                    return _cachedThemeName;
-
-                string theme = "";
-                if (_storeInformationSettings.AllowCustomerToSelectTheme)
-                {
-                    if (_workContext.CurrentCustomer != null)
-                        theme = _workContext.CurrentCustomer.GetAttribute<string>(SystemCustomerAttributeNames.WorkingThemeName, _genericAttributeService, _storeContext.CurrentStore.Id);
-                }
-
-                //default store theme
-                if (string.IsNullOrEmpty(theme))
-                    theme = _storeInformationSettings.DefaultStoreTheme;
-
-                //ensure that theme exists
-                if (!_themeProvider.ThemeConfigurationExists(theme))
-                {
-                    var themeInstance = _themeProvider.GetThemeConfigurations()
-                        .FirstOrDefault();
-                    if (themeInstance == null)
-                        throw new Exception("No theme could be loaded");
-                    theme = themeInstance.ThemeName;
-                }
-                
-                //cache theme
-                this._cachedThemeName = theme;
-                this._themeIsCached = true;
-                return theme;
+                var store = await _storeContext.GetCurrentStoreAsync();
+                themeName = await _genericAttributeService.GetAttributeAsync<string>(customer,
+                    NopCustomerDefaults.WorkingThemeNameAttribute, store.Id);
             }
-            set
+
+            //if not, try to get default store theme
+            if (string.IsNullOrEmpty(themeName))
+                themeName = _storeInformationSettings.DefaultStoreTheme;
+
+            //ensure that this theme exists
+            if (!await _themeProvider.ThemeExistsAsync(themeName))
             {
-                if (!_storeInformationSettings.AllowCustomerToSelectTheme)
-                    return;
-
-                if (_workContext.CurrentCustomer == null)
-                    return;
-
-                _genericAttributeService.SaveAttribute(_workContext.CurrentCustomer, SystemCustomerAttributeNames.WorkingThemeName, value, _storeContext.CurrentStore.Id);
-
-                //clear cache
-                this._themeIsCached = false;
+                //if it does not exist, try to get the first one
+                themeName = (await _themeProvider.GetThemesAsync()).FirstOrDefault()?.SystemName
+                            ?? throw new Exception("No theme could be loaded");
             }
+
+            //cache theme system name
+            _cachedThemeName = themeName;
+
+            return themeName;
         }
+
+        /// <summary>
+        /// Set current theme system name
+        /// </summary>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task SetWorkingThemeNameAsync(string workingThemeName)
+        {
+            //whether customers are allowed to select a theme
+            var customer = await _workContext.GetCurrentCustomerAsync();
+            if (!_storeInformationSettings.AllowCustomerToSelectTheme ||
+                customer == null)
+                return;
+
+            //save selected by customer theme system name
+            var store = await _storeContext.GetCurrentStoreAsync();
+            await _genericAttributeService.SaveAttributeAsync(customer,
+                NopCustomerDefaults.WorkingThemeNameAttribute, workingThemeName,
+                store.Id);
+
+            //clear cache
+            _cachedThemeName = null;
+        }
+
+        #endregion
     }
 }

@@ -1,12 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Web.Mvc;
-using Nop.Web.Framework.Mvc;
+using Microsoft.AspNetCore.Mvc.Rendering;
+using Nop.Web.Framework.Models;
 using Nop.Web.Models.Media;
 
 namespace Nop.Web.Models.ShoppingCart
 {
-    public partial class WishlistModel : BaseNopModel
+    public partial record WishlistModel : BaseNopModel
     {
         public WishlistModel()
         {
@@ -35,7 +35,7 @@ namespace Nop.Web.Models.ShoppingCart
         
 		#region Nested Classes
 
-        public partial class ShoppingCartItemModel : BaseNopEntityModel
+        public partial record ShoppingCartItemModel : BaseNopEntityModel
         {
             public ShoppingCartItemModel()
             {
@@ -43,6 +43,7 @@ namespace Nop.Web.Models.ShoppingCart
                 AllowedQuantities = new List<SelectListItem>();
                 Warnings = new List<string>();
             }
+
             public string Sku { get; set; }
 
             public PictureModel Picture {get;set;}
@@ -54,14 +55,18 @@ namespace Nop.Web.Models.ShoppingCart
             public string ProductSeName { get; set; }
 
             public string UnitPrice { get; set; }
+            public decimal UnitPriceValue { get; set; }
 
             public string SubTotal { get; set; }
+            public decimal SubTotalValue { get; set; }
 
             public string Discount { get; set; }
+            public decimal DiscountValue { get; set; }
+            public int? MaximumDiscountedQty { get; set; }
 
             public int Quantity { get; set; }
             public List<SelectListItem> AllowedQuantities { get; set; }
-            
+
             public string AttributeInfo { get; set; }
 
             public string RecurringInfo { get; set; }
@@ -71,7 +76,6 @@ namespace Nop.Web.Models.ShoppingCart
             public bool AllowItemEditing { get; set; }
 
             public IList<string> Warnings { get; set; }
-
         }
 
 		#endregion

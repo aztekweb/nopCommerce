@@ -1,44 +1,55 @@
 ﻿using System;
 using Nop.Core.Domain.Directory;
-using Nop.Services.Tasks;
+using Nop.Services.ScheduleTasks;
 
 namespace Nop.Services.Directory
 {
     /// <summary>
     /// Represents a task for updating exchange rates
     /// </summary>
-    public partial class UpdateExchangeRateTask : ITask
+    public partial class UpdateExchangeRateTask : IScheduleTask
     {
-        private readonly ICurrencyService _currencyService;
-        private readonly CurrencySettings _currencySettings;
+        #region Fields
 
-        public UpdateExchangeRateTask(ICurrencyService currencyService, CurrencySettings currencySettings)
+        private readonly CurrencySettings _currencySettings;
+        private readonly ICurrencyService _currencyService;
+
+        #endregion
+
+        #region Ctor
+
+        public UpdateExchangeRateTask(CurrencySettings currencySettings,
+            ICurrencyService currencyService)
         {
-            this._currencyService = currencyService;
-            this._currencySettings = currencySettings;
+            _currencySettings = currencySettings;
+            _currencyService = currencyService;
         }
+
+        #endregion
+
+        #region Methods
 
         /// <summary>
         /// Executes a task
         /// </summary>
-        public void Execute()
+        public async System.Threading.Tasks.Task ExecuteAsync()
         {
             if (!_currencySettings.AutoUpdateEnabled)
                 return;
 
-            var primaryCurrencyCode = _currencyService.GetCurrencyById(_currencySettings.PrimaryExchangeRateCurrencyId).CurrencyCode;
-            var exchangeRates = _currencyService.GetCurrencyLiveRates(primaryCurrencyCode);
-
-            foreach (var exchageRate in exchangeRates)
+            var exchangeRates = await _currencyService.GetCurrencyLiveRatesAsync();
+            foreach (var exchangeRate in exchangeRates)
             {
-                var currency = _currencyService.GetCurrencyByCode(exchageRate.CurrencyCode);
-                if (currency != null)
-                {
-                    currency.Rate = exchageRate.Rate;
-                    currency.UpdatedOnUtc = DateTime.UtcNow;
-                    _currencyService.UpdateCurrency(currency);
-                }
+                var currency = await _currencyService.GetCurrencyByCodeAsync(exchangeRate.CurrencyCode);
+                if (currency == null)
+                    continue;
+
+                currency.Rate = exchangeRate.Rate;
+                currency.UpdatedOnUtc = DateTime.UtcNow;
+                await _currencyService.UpdateCurrencyAsync(currency);
             }
         }
+
+        #endregion
     }
 }

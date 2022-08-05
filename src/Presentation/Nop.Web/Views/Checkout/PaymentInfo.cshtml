@@ -1,40 +1,37 @@
 ﻿@model CheckoutPaymentInfoModel
-@using Nop.Web.Models.Checkout;
 @{
-    Layout = "~/Views/Shared/_ColumnsOne.cshtml";
+    Layout = "_ColumnsOne";
 
     //title
-    Html.AddTitleParts(T("PageTitle.Checkout").Text);
+    NopHtml.AddTitleParts(T("PageTitle.Checkout").Text);
+    //page class
+    NopHtml.AppendPageCssClassParts("html-checkout-page");
+    NopHtml.AppendPageCssClassParts("html-payment-info-page");
 }
 <div class="page checkout-page payment-info-page">
-    @Html.Action("CheckoutProgress", "Checkout", new { step = CheckoutProgressStep.Payment })
+    @await Component.InvokeAsync(typeof(CheckoutProgressViewComponent), new { step = CheckoutProgressStep.Payment })
     <div class="page-title">
         <h1>@T("Checkout.PaymentInfo")</h1>
     </div>
     <div class="page-body checkout-data">
-        @Html.Widget("checkout_payment_info_top")
+        @await Component.InvokeAsync(typeof(WidgetViewComponent), new { widgetZone = PublicWidgetZones.CheckoutPaymentInfoTop, additionalData = Model })
         <div class="section payment-info">
-            @using (Html.BeginRouteForm("CheckoutPaymentInfo", FormMethod.Post))
-            {
-                var validationSummary = Html.ValidationSummary(false);
-                if (!MvcHtmlString.IsNullOrEmpty(validationSummary))
-                {
-                    <div class="message-error">@validationSummary</div>
-                }
+            <form asp-route="CheckoutPaymentInfo" method="post">
+                <div asp-validation-summary="ModelOnly" class="message-error"></div>
                 <div class="info">
-                    @Html.Action(Model.PaymentInfoActionName, Model.PaymentInfoControllerName, Model.PaymentInfoRouteValues)
+                    @await Component.InvokeAsync(Model.PaymentViewComponent)
                 </div>
                 <div class="buttons">
-                    <input type="submit" name="nextstep" value="@T("Checkout.NextButton")" class="button-1 payment-info-next-step-button" />
+                    <button type="submit" name="nextstep" class="button-1 payment-info-next-step-button">@T("Checkout.NextButton")</button>
                 </div>
-            }
+            </form>
         </div>
-        @Html.Widget("checkout_payment_info_bottom")
+        @await Component.InvokeAsync(typeof(WidgetViewComponent), new { widgetZone = PublicWidgetZones.CheckoutPaymentInfoBottom, additionalData = Model })
         <div class="section order-summary">
             <div class="title">
                 <strong>@T("Checkout.OrderSummary")</strong>
             </div>
-            @Html.Action("OrderSummary", "ShoppingCart")
+            @await Component.InvokeAsync(typeof(OrderSummaryViewComponent), "ShoppingCart")
         </div>
     </div>
 </div>

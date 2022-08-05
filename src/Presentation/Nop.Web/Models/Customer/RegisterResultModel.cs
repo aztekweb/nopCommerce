@@ -1,9 +1,11 @@
-﻿using Nop.Web.Framework.Mvc;
+﻿using Nop.Web.Framework.Models;
 
 namespace Nop.Web.Models.Customer
 {
-    public partial class RegisterResultModel : BaseNopModel
+    public partial record RegisterResultModel : BaseNopModel
     {
         public string Result { get; set; }
+
+        public string ReturnUrl { get; set; }
     }
 }

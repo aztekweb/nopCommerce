@@ -1,9 +1,9 @@
-using System;
-using System.Linq;
+﻿using System.Linq;
+using System.Threading.Tasks;
 using Nop.Core;
-using Nop.Core.Data;
 using Nop.Core.Domain.Common;
-using Nop.Services.Events;
+using Nop.Data;
+using Nop.Data.Extensions;
 
 namespace Nop.Services.Common
 {
@@ -15,17 +15,14 @@ namespace Nop.Services.Common
         #region Fields
 
         private readonly IRepository<SearchTerm> _searchTermRepository;
-        private readonly IEventPublisher _eventPublisher;
 
         #endregion
 
         #region Ctor
 
-        public SearchTermService(IRepository<SearchTerm> searchTermRepository,
-            IEventPublisher eventPublisher)
+        public SearchTermService(IRepository<SearchTerm> searchTermRepository)
         {
-            this._searchTermRepository = searchTermRepository;
-            this._eventPublisher = eventPublisher;
+            _searchTermRepository = searchTermRepository;
         }
 
         #endregion
@@ -33,49 +30,25 @@ namespace Nop.Services.Common
         #region Methods
 
         /// <summary>
-        /// Deletes a search term record
-        /// </summary>
-        /// <param name="searchTerm">Search term</param>
-        public virtual void DeleteAddress(SearchTerm searchTerm)
-        {
-            if (searchTerm == null)
-                throw new ArgumentNullException("searchTerm");
-
-            _searchTermRepository.Delete(searchTerm);
-
-            //event notification
-            _eventPublisher.EntityDeleted(searchTerm);
-        }
-
-        /// <summary>
-        /// Gets a search term record by identifier
-        /// </summary>
-        /// <param name="searchTermId">Search term identifier</param>
-        /// <returns>Search term</returns>
-        public virtual SearchTerm GetSearchTermById(int searchTermId)
-        {
-            if (searchTermId == 0)
-                return null;
-
-            return _searchTermRepository.GetById(searchTermId);
-        }
-
-        /// <summary>
         /// Gets a search term record by keyword
         /// </summary>
         /// <param name="keyword">Search term keyword</param>
         /// <param name="storeId">Store identifier</param>
-        /// <returns>Search term</returns>
-        public virtual SearchTerm GetSearchTermByKeyword(string keyword, int storeId)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the search term
+        /// </returns>
+        public virtual async Task<SearchTerm> GetSearchTermByKeywordAsync(string keyword, int storeId)
         {
-            if (String.IsNullOrEmpty(keyword))
+            if (string.IsNullOrEmpty(keyword))
                 return null;
 
             var query = from st in _searchTermRepository.Table
                         where st.Keyword == keyword && st.StoreId == storeId
                         orderby st.Id
                         select st;
-            var searchTerm = query.FirstOrDefault();
+            var searchTerm = await query.FirstOrDefaultAsync();
+
             return searchTerm;
         }
 
@@ -84,16 +57,19 @@ namespace Nop.Services.Common
         /// </summary>
         /// <param name="pageIndex">Page index</param>
         /// <param name="pageSize">Page size</param>
-        /// <returns>A list search term report lines</returns>
-        public virtual IPagedList<SearchTermReportLine> GetStats(int pageIndex = 0, int pageSize = int.MaxValue)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains a list search term report lines
+        /// </returns>
+        public virtual async Task<IPagedList<SearchTermReportLine>> GetStatsAsync(int pageIndex = 0, int pageSize = int.MaxValue)
         {
             var query = (from st in _searchTermRepository.Table
-                        group st by st.Keyword into groupedResult
-                        select new
-                        {
-                            Keyword = groupedResult.Key,
-                            Count = groupedResult.Sum(o => o.Count)
-                        })
+                         group st by st.Keyword into groupedResult
+                         select new
+                         {
+                             Keyword = groupedResult.Key,
+                             Count = groupedResult.Sum(o => o.Count)
+                         })
                         .OrderByDescending(m => m.Count)
                         .Select(r => new SearchTermReportLine
                         {
@@ -101,7 +77,8 @@ namespace Nop.Services.Common
                             Count = r.Count
                         });
 
-            var result = new PagedList<SearchTermReportLine>(query, pageIndex, pageSize);
+            var result = await query.ToPagedListAsync(pageIndex, pageSize);
+
             return result;
         }
 
@@ -109,32 +86,22 @@ namespace Nop.Services.Common
         /// Inserts a search term record
         /// </summary>
         /// <param name="searchTerm">Search term</param>
-        public virtual void InsertSearchTerm(SearchTerm searchTerm)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task InsertSearchTermAsync(SearchTerm searchTerm)
         {
-            if (searchTerm == null)
-                throw new ArgumentNullException("searchTerm");
-
-            _searchTermRepository.Insert(searchTerm);
-
-            //event notification
-            _eventPublisher.EntityInserted(searchTerm);
+            await _searchTermRepository.InsertAsync(searchTerm);
         }
 
         /// <summary>
         /// Updates the search term record
         /// </summary>
         /// <param name="searchTerm">Search term</param>
-        public virtual void UpdateSearchTerm(SearchTerm searchTerm)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateSearchTermAsync(SearchTerm searchTerm)
         {
-            if (searchTerm == null)
-                throw new ArgumentNullException("searchTerm");
-
-            _searchTermRepository.Update(searchTerm);
-
-            //event notification
-            _eventPublisher.EntityUpdated(searchTerm);
+            await _searchTermRepository.UpdateAsync(searchTerm);
         }
-        
+
         #endregion
     }
 }

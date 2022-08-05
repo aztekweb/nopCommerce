@@ -1,8 +1,8 @@
-﻿using Nop.Web.Framework.Mvc;
+﻿using Nop.Web.Framework.Models;
 
 namespace Nop.Web.Models.Topics
 {
-    public partial class TopicModel : BaseNopEntityModel
+    public partial record TopicModel : BaseNopEntityModel
     {
         public string SystemName { get; set; }
 

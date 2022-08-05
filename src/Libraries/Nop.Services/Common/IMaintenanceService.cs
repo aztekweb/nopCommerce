@@ -1,4 +1,4 @@
-using Nop.Core;
+﻿using System.Collections.Generic;
 
 namespace Nop.Services.Common
 {
@@ -8,17 +8,22 @@ namespace Nop.Services.Common
     public partial interface IMaintenanceService
     {
         /// <summary>
-        /// Get the current ident value
+        /// Gets all backup files
         /// </summary>
-        /// <typeparam name="T">Entity</typeparam>
-        /// <returns>Integer ident; null if cannot get the result</returns>
-        int? GetTableIdent<T>() where T : BaseEntity;
+        /// <returns>Backup file collection</returns>
+        IList<string> GetAllBackupFiles();
 
         /// <summary>
-        /// Set table ident (is supported)
+        /// Creates a path to a new database backup file
         /// </summary>
-        /// <typeparam name="T">Entity</typeparam>
-        /// <param name="ident">Ident value</param>
-        void SetTableIdent<T>(int ident) where T : BaseEntity;
+        /// <returns>Path to a new database backup file</returns>
+        string CreateNewBackupFilePath();
+
+        /// <summary>
+        /// Returns the path to the backup file
+        /// </summary>
+        /// <param name="backupFileName">The name of the backup file</param>
+        /// <returns>The path to the backup file</returns>
+        string GetBackupPath(string backupFileName);
     }
 }

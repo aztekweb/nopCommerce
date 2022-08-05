@@ -1,13 +1,13 @@
 ﻿using System.Collections.Generic;
-using Nop.Web.Framework.Mvc;
+using Nop.Web.Framework.Models;
 
 namespace Nop.Web.Models.Catalog
 {
-    public partial class ManufacturerNavigationModel : BaseNopModel
+    public partial record ManufacturerNavigationModel : BaseNopModel
     {
         public ManufacturerNavigationModel()
         {
-            this.Manufacturers = new List<ManufacturerBriefInfoModel>();
+            Manufacturers = new List<ManufacturerBriefInfoModel>();
         }
 
         public IList<ManufacturerBriefInfoModel> Manufacturers { get; set; }
@@ -15,7 +15,7 @@ namespace Nop.Web.Models.Catalog
         public int TotalManufacturers { get; set; }
     }
 
-    public partial class ManufacturerBriefInfoModel : BaseNopEntityModel
+    public partial record ManufacturerBriefInfoModel : BaseNopEntityModel
     {
         public string Name { get; set; }
 

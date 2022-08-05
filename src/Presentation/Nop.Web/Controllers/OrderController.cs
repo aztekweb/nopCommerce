@@ -2,521 +2,64 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Web.Mvc;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Nop.Core;
-using Nop.Core.Domain.Catalog;
-using Nop.Core.Domain.Common;
 using Nop.Core.Domain.Customers;
 using Nop.Core.Domain.Orders;
-using Nop.Core.Domain.Shipping;
-using Nop.Core.Domain.Tax;
-using Nop.Services.Catalog;
 using Nop.Services.Common;
-using Nop.Services.Directory;
-using Nop.Services.Helpers;
-using Nop.Services.Localization;
-using Nop.Services.Media;
+using Nop.Services.Customers;
 using Nop.Services.Orders;
 using Nop.Services.Payments;
-using Nop.Services.Seo;
 using Nop.Services.Shipping;
-using Nop.Web.Extensions;
+using Nop.Web.Factories;
 using Nop.Web.Framework.Controllers;
-using Nop.Web.Framework.Security;
-using Nop.Web.Models.Common;
-using Nop.Web.Models.Order;
+using Nop.Web.Framework.Mvc.Filters;
 
 namespace Nop.Web.Controllers
 {
+    [AutoValidateAntiforgeryToken]
     public partial class OrderController : BasePublicController
     {
-		#region Fields
+        #region Fields
 
-        private readonly IOrderService _orderService;
-        private readonly IShipmentService _shipmentService;
-        private readonly IWorkContext _workContext;
-        private readonly ICurrencyService _currencyService;
-        private readonly IPriceFormatter _priceFormatter;
+        private readonly ICustomerService _customerService;
+        private readonly IOrderModelFactory _orderModelFactory;
         private readonly IOrderProcessingService _orderProcessingService;
-        private readonly IDateTimeHelper _dateTimeHelper;
+        private readonly IOrderService _orderService;
         private readonly IPaymentService _paymentService;
-        private readonly ILocalizationService _localizationService;
         private readonly IPdfService _pdfService;
-        private readonly IShippingService _shippingService;
-        private readonly ICountryService _countryService;
-        private readonly IProductAttributeParser _productAttributeParser;
+        private readonly IShipmentService _shipmentService;
         private readonly IWebHelper _webHelper;
-        private readonly IDownloadService _downloadService;
-        private readonly IAddressAttributeFormatter _addressAttributeFormatter;
-        private readonly IStoreContext _storeContext;
-        private readonly IOrderTotalCalculationService _orderTotalCalculationService;
-        private readonly IRewardPointService _rewardPointService;
-
-        private readonly OrderSettings _orderSettings;
-        private readonly TaxSettings _taxSettings;
-        private readonly CatalogSettings _catalogSettings;
-        private readonly ShippingSettings _shippingSettings;
-        private readonly AddressSettings _addressSettings;
+        private readonly IWorkContext _workContext;
         private readonly RewardPointsSettings _rewardPointsSettings;
-        private readonly PdfSettings _pdfSettings;
 
         #endregion
 
-		#region Constructors
+		#region Ctor
 
-        public OrderController(IOrderService orderService, 
-            IShipmentService shipmentService, 
-            IWorkContext workContext,
-            ICurrencyService currencyService,
-            IPriceFormatter priceFormatter,
+        public OrderController(ICustomerService customerService,
+            IOrderModelFactory orderModelFactory,
             IOrderProcessingService orderProcessingService, 
-            IDateTimeHelper dateTimeHelper,
+            IOrderService orderService, 
             IPaymentService paymentService, 
-            ILocalizationService localizationService,
-            IPdfService pdfService, 
-            IShippingService shippingService,
-            ICountryService countryService, 
-            IProductAttributeParser productAttributeParser,
+            IPdfService pdfService,
+            IShipmentService shipmentService, 
             IWebHelper webHelper,
-            IDownloadService downloadService,
-            IAddressAttributeFormatter addressAttributeFormatter,
-            IStoreContext storeContext,
-            IOrderTotalCalculationService orderTotalCalculationService,
-            IRewardPointService rewardPointService,
-            CatalogSettings catalogSettings,
-            OrderSettings orderSettings,
-            TaxSettings taxSettings,
-            ShippingSettings shippingSettings, 
-            AddressSettings addressSettings,
-            RewardPointsSettings rewardPointsSettings,
-            PdfSettings pdfSettings)
+            IWorkContext workContext,
+            RewardPointsSettings rewardPointsSettings)
         {
-            this._orderService = orderService;
-            this._shipmentService = shipmentService;
-            this._workContext = workContext;
-            this._currencyService = currencyService;
-            this._priceFormatter = priceFormatter;
-            this._orderProcessingService = orderProcessingService;
-            this._dateTimeHelper = dateTimeHelper;
-            this._paymentService = paymentService;
-            this._localizationService = localizationService;
-            this._pdfService = pdfService;
-            this._shippingService = shippingService;
-            this._countryService = countryService;
-            this._productAttributeParser = productAttributeParser;
-            this._webHelper = webHelper;
-            this._downloadService = downloadService;
-            this._addressAttributeFormatter = addressAttributeFormatter;
-            this._storeContext = storeContext;
-            this._orderTotalCalculationService = orderTotalCalculationService;
-            this._rewardPointService = rewardPointService;
-
-            this._catalogSettings = catalogSettings;
-            this._orderSettings = orderSettings;
-            this._taxSettings = taxSettings;
-            this._shippingSettings = shippingSettings;
-            this._addressSettings = addressSettings;
-            this._rewardPointsSettings = rewardPointsSettings;
-            this._pdfSettings = pdfSettings;
-        }
-
-        #endregion
-
-        #region Utilities
-
-        [NonAction]
-        protected virtual CustomerOrderListModel PrepareCustomerOrderListModel()
-        {
-            var model = new CustomerOrderListModel();
-            var orders = _orderService.SearchOrders(storeId: _storeContext.CurrentStore.Id,
-                customerId: _workContext.CurrentCustomer.Id);
-            foreach (var order in orders)
-            {
-                var orderModel = new CustomerOrderListModel.OrderDetailsModel
-                {
-                    Id = order.Id,
-                    CreatedOn = _dateTimeHelper.ConvertToUserTime(order.CreatedOnUtc, DateTimeKind.Utc),
-                    OrderStatusEnum = order.OrderStatus,
-                    OrderStatus = order.OrderStatus.GetLocalizedEnum(_localizationService, _workContext),
-                    PaymentStatus = order.PaymentStatus.GetLocalizedEnum(_localizationService, _workContext),
-                    ShippingStatus = order.ShippingStatus.GetLocalizedEnum(_localizationService, _workContext),
-                    IsReturnRequestAllowed = _orderProcessingService.IsReturnRequestAllowed(order)
-                };
-                var orderTotalInCustomerCurrency = _currencyService.ConvertCurrency(order.OrderTotal, order.CurrencyRate);
-                orderModel.OrderTotal = _priceFormatter.FormatPrice(orderTotalInCustomerCurrency, true, order.CustomerCurrencyCode, false, _workContext.WorkingLanguage);
-
-                model.Orders.Add(orderModel);
-            }
-
-            var recurringPayments = _orderService.SearchRecurringPayments(_storeContext.CurrentStore.Id,
-                _workContext.CurrentCustomer.Id);
-            foreach (var recurringPayment in recurringPayments)
-            {
-                var recurringPaymentModel = new CustomerOrderListModel.RecurringOrderModel
-                {
-                    Id = recurringPayment.Id,
-                    StartDate = _dateTimeHelper.ConvertToUserTime(recurringPayment.StartDateUtc, DateTimeKind.Utc).ToString(),
-                    CycleInfo = string.Format("{0} {1}", recurringPayment.CycleLength, recurringPayment.CyclePeriod.GetLocalizedEnum(_localizationService, _workContext)),
-                    NextPayment = recurringPayment.NextPaymentDate.HasValue ? _dateTimeHelper.ConvertToUserTime(recurringPayment.NextPaymentDate.Value, DateTimeKind.Utc).ToString() : "",
-                    TotalCycles = recurringPayment.TotalCycles,
-                    CyclesRemaining = recurringPayment.CyclesRemaining,
-                    InitialOrderId = recurringPayment.InitialOrder.Id,
-                    CanCancel = _orderProcessingService.CanCancelRecurringPayment(_workContext.CurrentCustomer, recurringPayment),
-                };
-
-                model.RecurringOrders.Add(recurringPaymentModel);
-            }
-
-            return model;
-        }
-
-        [NonAction]
-        protected virtual OrderDetailsModel PrepareOrderDetailsModel(Order order)
-        {
-            if (order == null)
-                throw new ArgumentNullException("order");
-            var model = new OrderDetailsModel();
-
-            model.Id = order.Id;
-            model.CreatedOn = _dateTimeHelper.ConvertToUserTime(order.CreatedOnUtc, DateTimeKind.Utc);
-            model.OrderStatus = order.OrderStatus.GetLocalizedEnum(_localizationService, _workContext);
-            model.IsReOrderAllowed = _orderSettings.IsReOrderAllowed;
-            model.IsReturnRequestAllowed = _orderProcessingService.IsReturnRequestAllowed(order);
-            model.PdfInvoiceDisabled = _pdfSettings.DisablePdfInvoicesForPendingOrders && order.OrderStatus == OrderStatus.Pending;
-
-            //shipping info
-            model.ShippingStatus = order.ShippingStatus.GetLocalizedEnum(_localizationService, _workContext);
-            if (order.ShippingStatus != ShippingStatus.ShippingNotRequired)
-            {
-                model.IsShippable = true;
-                model.PickUpInStore = order.PickUpInStore;
-                if (!order.PickUpInStore)
-                {
-                    model.ShippingAddress.PrepareModel(
-                        address: order.ShippingAddress,
-                        excludeProperties: false,
-                        addressSettings: _addressSettings,
-                        addressAttributeFormatter: _addressAttributeFormatter);
-                }
-                model.ShippingMethod = order.ShippingMethod;
-   
-
-                //shipments (only already shipped)
-                var shipments = order.Shipments.Where(x => x.ShippedDateUtc.HasValue).OrderBy(x => x.CreatedOnUtc).ToList();
-                foreach (var shipment in shipments)
-                {
-                    var shipmentModel = new OrderDetailsModel.ShipmentBriefModel
-                    {
-                        Id = shipment.Id,
-                        TrackingNumber = shipment.TrackingNumber,
-                    };
-                    if (shipment.ShippedDateUtc.HasValue)
-                        shipmentModel.ShippedDate = _dateTimeHelper.ConvertToUserTime(shipment.ShippedDateUtc.Value, DateTimeKind.Utc);
-                    if (shipment.DeliveryDateUtc.HasValue)
-                        shipmentModel.DeliveryDate = _dateTimeHelper.ConvertToUserTime(shipment.DeliveryDateUtc.Value, DateTimeKind.Utc);
-                    model.Shipments.Add(shipmentModel);
-                }
-            }
-
-
-            //billing info
-            model.BillingAddress.PrepareModel(
-                address: order.BillingAddress,
-                excludeProperties: false,
-                addressSettings: _addressSettings,
-                addressAttributeFormatter: _addressAttributeFormatter);
-
-            //VAT number
-            model.VatNumber = order.VatNumber;
-
-            //payment method
-            var paymentMethod = _paymentService.LoadPaymentMethodBySystemName(order.PaymentMethodSystemName);
-            model.PaymentMethod = paymentMethod != null ? paymentMethod.GetLocalizedFriendlyName(_localizationService, _workContext.WorkingLanguage.Id) : order.PaymentMethodSystemName;
-            model.PaymentMethodStatus = order.PaymentStatus.GetLocalizedEnum(_localizationService, _workContext);
-            model.CanRePostProcessPayment = _paymentService.CanRePostProcessPayment(order);
-            //custom values
-            model.CustomValues = order.DeserializeCustomValues();
-
-            //order subtotal
-            if (order.CustomerTaxDisplayType == TaxDisplayType.IncludingTax && !_taxSettings.ForceTaxExclusionFromOrderSubtotal)
-            {
-                //including tax
-
-                //order subtotal
-                var orderSubtotalInclTaxInCustomerCurrency = _currencyService.ConvertCurrency(order.OrderSubtotalInclTax, order.CurrencyRate);
-                model.OrderSubtotal = _priceFormatter.FormatPrice(orderSubtotalInclTaxInCustomerCurrency, true, order.CustomerCurrencyCode, _workContext.WorkingLanguage, true);
-                //discount (applied to order subtotal)
-                var orderSubTotalDiscountInclTaxInCustomerCurrency = _currencyService.ConvertCurrency(order.OrderSubTotalDiscountInclTax, order.CurrencyRate);
-                if (orderSubTotalDiscountInclTaxInCustomerCurrency > decimal.Zero)
-                    model.OrderSubTotalDiscount = _priceFormatter.FormatPrice(-orderSubTotalDiscountInclTaxInCustomerCurrency, true, order.CustomerCurrencyCode, _workContext.WorkingLanguage, true);
-            }
-            else
-            {
-                //excluding tax
-
-                //order subtotal
-                var orderSubtotalExclTaxInCustomerCurrency = _currencyService.ConvertCurrency(order.OrderSubtotalExclTax, order.CurrencyRate);
-                model.OrderSubtotal = _priceFormatter.FormatPrice(orderSubtotalExclTaxInCustomerCurrency, true, order.CustomerCurrencyCode, _workContext.WorkingLanguage, false);
-                //discount (applied to order subtotal)
-                var orderSubTotalDiscountExclTaxInCustomerCurrency = _currencyService.ConvertCurrency(order.OrderSubTotalDiscountExclTax, order.CurrencyRate);
-                if (orderSubTotalDiscountExclTaxInCustomerCurrency > decimal.Zero)
-                    model.OrderSubTotalDiscount = _priceFormatter.FormatPrice(-orderSubTotalDiscountExclTaxInCustomerCurrency, true, order.CustomerCurrencyCode, _workContext.WorkingLanguage, false);
-            }
-
-            if (order.CustomerTaxDisplayType == TaxDisplayType.IncludingTax)
-            {
-                //including tax
-
-                //order shipping
-                var orderShippingInclTaxInCustomerCurrency = _currencyService.ConvertCurrency(order.OrderShippingInclTax, order.CurrencyRate);
-                model.OrderShipping = _priceFormatter.FormatShippingPrice(orderShippingInclTaxInCustomerCurrency, true, order.CustomerCurrencyCode, _workContext.WorkingLanguage, true);
-                //payment method additional fee
-                var paymentMethodAdditionalFeeInclTaxInCustomerCurrency = _currencyService.ConvertCurrency(order.PaymentMethodAdditionalFeeInclTax, order.CurrencyRate);
-                if (paymentMethodAdditionalFeeInclTaxInCustomerCurrency > decimal.Zero)
-                    model.PaymentMethodAdditionalFee = _priceFormatter.FormatPaymentMethodAdditionalFee(paymentMethodAdditionalFeeInclTaxInCustomerCurrency, true, order.CustomerCurrencyCode, _workContext.WorkingLanguage, true);
-            }
-            else
-            {
-                //excluding tax
-
-                //order shipping
-                var orderShippingExclTaxInCustomerCurrency = _currencyService.ConvertCurrency(order.OrderShippingExclTax, order.CurrencyRate);
-                model.OrderShipping = _priceFormatter.FormatShippingPrice(orderShippingExclTaxInCustomerCurrency, true, order.CustomerCurrencyCode, _workContext.WorkingLanguage, false);
-                //payment method additional fee
-                var paymentMethodAdditionalFeeExclTaxInCustomerCurrency = _currencyService.ConvertCurrency(order.PaymentMethodAdditionalFeeExclTax, order.CurrencyRate);
-                if (paymentMethodAdditionalFeeExclTaxInCustomerCurrency > decimal.Zero)
-                    model.PaymentMethodAdditionalFee = _priceFormatter.FormatPaymentMethodAdditionalFee(paymentMethodAdditionalFeeExclTaxInCustomerCurrency, true, order.CustomerCurrencyCode, _workContext.WorkingLanguage, false);
-            }
-
-            //tax
-            bool displayTax = true;
-            bool displayTaxRates = true;
-            if (_taxSettings.HideTaxInOrderSummary && order.CustomerTaxDisplayType == TaxDisplayType.IncludingTax)
-            {
-                displayTax = false;
-                displayTaxRates = false;
-            }
-            else
-            {
-                if (order.OrderTax == 0 && _taxSettings.HideZeroTax)
-                {
-                    displayTax = false;
-                    displayTaxRates = false;
-                }
-                else
-                {
-                    displayTaxRates = _taxSettings.DisplayTaxRates && order.TaxRatesDictionary.Count > 0;
-                    displayTax = !displayTaxRates;
-
-                    var orderTaxInCustomerCurrency = _currencyService.ConvertCurrency(order.OrderTax, order.CurrencyRate);
-                    //TODO pass languageId to _priceFormatter.FormatPrice
-                    model.Tax = _priceFormatter.FormatPrice(orderTaxInCustomerCurrency, true, order.CustomerCurrencyCode, false, _workContext.WorkingLanguage);
-
-                    foreach (var tr in order.TaxRatesDictionary)
-                    {
-                        model.TaxRates.Add(new OrderDetailsModel.TaxRate
-                        {
-                            Rate = _priceFormatter.FormatTaxRate(tr.Key),
-                            //TODO pass languageId to _priceFormatter.FormatPrice
-                            Value = _priceFormatter.FormatPrice(_currencyService.ConvertCurrency(tr.Value, order.CurrencyRate), true, order.CustomerCurrencyCode, false, _workContext.WorkingLanguage),
-                        });
-                    }
-                }
-            }
-            model.DisplayTaxRates = displayTaxRates;
-            model.DisplayTax = displayTax;
-            model.DisplayTaxShippingInfo = _catalogSettings.DisplayTaxShippingInfoOrderDetailsPage;
-            model.PricesIncludeTax = order.CustomerTaxDisplayType == TaxDisplayType.IncludingTax;
-
-            //discount (applied to order total)
-            var orderDiscountInCustomerCurrency = _currencyService.ConvertCurrency(order.OrderDiscount, order.CurrencyRate);
-            if (orderDiscountInCustomerCurrency > decimal.Zero)
-                model.OrderTotalDiscount = _priceFormatter.FormatPrice(-orderDiscountInCustomerCurrency, true, order.CustomerCurrencyCode, false, _workContext.WorkingLanguage);
-
-
-            //gift cards
-            foreach (var gcuh in order.GiftCardUsageHistory)
-            {
-                model.GiftCards.Add(new OrderDetailsModel.GiftCard
-                {
-                    CouponCode = gcuh.GiftCard.GiftCardCouponCode,
-                    Amount = _priceFormatter.FormatPrice(-(_currencyService.ConvertCurrency(gcuh.UsedValue, order.CurrencyRate)), true, order.CustomerCurrencyCode, false, _workContext.WorkingLanguage),
-                });
-            }
-
-            //reward points           
-            if (order.RedeemedRewardPointsEntry != null)
-            {
-                model.RedeemedRewardPoints = -order.RedeemedRewardPointsEntry.Points;
-                model.RedeemedRewardPointsAmount = _priceFormatter.FormatPrice(-(_currencyService.ConvertCurrency(order.RedeemedRewardPointsEntry.UsedAmount, order.CurrencyRate)), true, order.CustomerCurrencyCode, false, _workContext.WorkingLanguage);
-            }
-
-            //total
-            var orderTotalInCustomerCurrency = _currencyService.ConvertCurrency(order.OrderTotal, order.CurrencyRate);
-            model.OrderTotal = _priceFormatter.FormatPrice(orderTotalInCustomerCurrency, true, order.CustomerCurrencyCode, false, _workContext.WorkingLanguage);
-
-            //checkout attributes
-            model.CheckoutAttributeInfo = order.CheckoutAttributeDescription;
-
-            //order notes
-            foreach (var orderNote in order.OrderNotes
-                .Where(on => on.DisplayToCustomer)
-                .OrderByDescending(on => on.CreatedOnUtc)
-                .ToList())
-            {
-                model.OrderNotes.Add(new OrderDetailsModel.OrderNote
-                {
-                    Id = orderNote.Id,
-                    HasDownload = orderNote.DownloadId > 0,
-                    Note = orderNote.FormatOrderNoteText(),
-                    CreatedOn = _dateTimeHelper.ConvertToUserTime(orderNote.CreatedOnUtc, DateTimeKind.Utc)
-                });
-            }
-
-
-            //purchased products
-            model.ShowSku = _catalogSettings.ShowProductSku;
-            var orderItems = _orderService.GetAllOrderItems(order.Id, null, null, null, null, null, null);
-            foreach (var orderItem in orderItems)
-            {
-                var orderItemModel = new OrderDetailsModel.OrderItemModel
-                {
-                    Id = orderItem.Id,
-                    OrderItemGuid = orderItem.OrderItemGuid,
-                    Sku = orderItem.Product.FormatSku(orderItem.AttributesXml, _productAttributeParser),
-                    ProductId = orderItem.Product.Id,
-                    ProductName = orderItem.Product.GetLocalized(x => x.Name),
-                    ProductSeName = orderItem.Product.GetSeName(),
-                    Quantity = orderItem.Quantity,
-                    AttributeInfo = orderItem.AttributeDescription,
-                };
-                //rental info
-                if (orderItem.Product.IsRental)
-                {
-                    var rentalStartDate = orderItem.RentalStartDateUtc.HasValue ? orderItem.Product.FormatRentalDate(orderItem.RentalStartDateUtc.Value) : "";
-                    var rentalEndDate = orderItem.RentalEndDateUtc.HasValue ? orderItem.Product.FormatRentalDate(orderItem.RentalEndDateUtc.Value) : "";
-                    orderItemModel.RentalInfo = string.Format(_localizationService.GetResource("Order.Rental.FormattedDate"),
-                        rentalStartDate, rentalEndDate);
-                }
-                model.Items.Add(orderItemModel);
-
-                //unit price, subtotal
-                if (order.CustomerTaxDisplayType == TaxDisplayType.IncludingTax)
-                {
-                    //including tax
-                    var unitPriceInclTaxInCustomerCurrency = _currencyService.ConvertCurrency(orderItem.UnitPriceInclTax, order.CurrencyRate);
-                    orderItemModel.UnitPrice = _priceFormatter.FormatPrice(unitPriceInclTaxInCustomerCurrency, true, order.CustomerCurrencyCode, _workContext.WorkingLanguage, true);
-
-                    var priceInclTaxInCustomerCurrency = _currencyService.ConvertCurrency(orderItem.PriceInclTax, order.CurrencyRate);
-                    orderItemModel.SubTotal = _priceFormatter.FormatPrice(priceInclTaxInCustomerCurrency, true, order.CustomerCurrencyCode, _workContext.WorkingLanguage, true);
-                }
-                else
-                {
-                    //excluding tax
-                    var unitPriceExclTaxInCustomerCurrency = _currencyService.ConvertCurrency(orderItem.UnitPriceExclTax, order.CurrencyRate);
-                    orderItemModel.UnitPrice = _priceFormatter.FormatPrice(unitPriceExclTaxInCustomerCurrency, true, order.CustomerCurrencyCode, _workContext.WorkingLanguage, false);
-
-                    var priceExclTaxInCustomerCurrency = _currencyService.ConvertCurrency(orderItem.PriceExclTax, order.CurrencyRate);
-                    orderItemModel.SubTotal = _priceFormatter.FormatPrice(priceExclTaxInCustomerCurrency, true, order.CustomerCurrencyCode, _workContext.WorkingLanguage, false);
-                }
-
-                //downloadable products
-                if (_downloadService.IsDownloadAllowed(orderItem))
-                    orderItemModel.DownloadId = orderItem.Product.DownloadId;
-                if (_downloadService.IsLicenseDownloadAllowed(orderItem))
-                    orderItemModel.LicenseId = orderItem.LicenseDownloadId.HasValue ? orderItem.LicenseDownloadId.Value : 0;
-            }
-
-            return model;
-        }
-
-        [NonAction]
-        protected virtual ShipmentDetailsModel PrepareShipmentDetailsModel(Shipment shipment)
-        {
-            if (shipment == null)
-                throw new ArgumentNullException("shipment");
-
-            var order = shipment.Order;
-            if (order == null)
-                throw new Exception("order cannot be loaded");
-            var model = new ShipmentDetailsModel();
-            
-            model.Id = shipment.Id;
-            if (shipment.ShippedDateUtc.HasValue)
-                model.ShippedDate = _dateTimeHelper.ConvertToUserTime(shipment.ShippedDateUtc.Value, DateTimeKind.Utc);
-            if (shipment.DeliveryDateUtc.HasValue)
-                model.DeliveryDate = _dateTimeHelper.ConvertToUserTime(shipment.DeliveryDateUtc.Value, DateTimeKind.Utc);
-            
-            //tracking number and shipment information
-            if (!String.IsNullOrEmpty(shipment.TrackingNumber))
-            {
-                model.TrackingNumber = shipment.TrackingNumber;
-                var srcm = _shippingService.LoadShippingRateComputationMethodBySystemName(order.ShippingRateComputationMethodSystemName);
-                if (srcm != null &&
-                    srcm.PluginDescriptor.Installed &&
-                    srcm.IsShippingRateComputationMethodActive(_shippingSettings))
-                {
-                    var shipmentTracker = srcm.ShipmentTracker;
-                    if (shipmentTracker != null)
-                    {
-                        model.TrackingNumberUrl = shipmentTracker.GetUrl(shipment.TrackingNumber);
-                        if (_shippingSettings.DisplayShipmentEventsToCustomers)
-                        {
-                            var shipmentEvents = shipmentTracker.GetShipmentEvents(shipment.TrackingNumber);
-                            if (shipmentEvents != null)
-                            {
-                                foreach (var shipmentEvent in shipmentEvents)
-                                {
-                                    var shipmentStatusEventModel = new ShipmentDetailsModel.ShipmentStatusEventModel();
-                                    var shipmentEventCountry = _countryService.GetCountryByTwoLetterIsoCode(shipmentEvent.CountryCode);
-                                    shipmentStatusEventModel.Country = shipmentEventCountry != null
-                                                                           ? shipmentEventCountry.GetLocalized(x => x.Name)
-                                                                           : shipmentEvent.CountryCode;
-                                    shipmentStatusEventModel.Date = shipmentEvent.Date;
-                                    shipmentStatusEventModel.EventName = shipmentEvent.EventName;
-                                    shipmentStatusEventModel.Location = shipmentEvent.Location;
-                                    model.ShipmentStatusEvents.Add(shipmentStatusEventModel);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            //products in this shipment
-            model.ShowSku = _catalogSettings.ShowProductSku;
-            foreach (var shipmentItem in shipment.ShipmentItems)
-            {
-                var orderItem = _orderService.GetOrderItemById(shipmentItem.OrderItemId);
-                if (orderItem == null)
-                    continue;
-
-                var shipmentItemModel = new ShipmentDetailsModel.ShipmentItemModel
-                {
-                    Id = shipmentItem.Id,
-                    Sku = orderItem.Product.FormatSku(orderItem.AttributesXml, _productAttributeParser),
-                    ProductId = orderItem.Product.Id,
-                    ProductName = orderItem.Product.GetLocalized(x => x.Name),
-                    ProductSeName = orderItem.Product.GetSeName(),
-                    AttributeInfo = orderItem.AttributeDescription,
-                    QuantityOrdered = orderItem.Quantity,
-                    QuantityShipped = shipmentItem.Quantity,
-                };
-                //rental info
-                if (orderItem.Product.IsRental)
-                {
-                    var rentalStartDate = orderItem.RentalStartDateUtc.HasValue ? orderItem.Product.FormatRentalDate(orderItem.RentalStartDateUtc.Value) : "";
-                    var rentalEndDate = orderItem.RentalEndDateUtc.HasValue ? orderItem.Product.FormatRentalDate(orderItem.RentalEndDateUtc.Value) : "";
-                    shipmentItemModel.RentalInfo = string.Format(_localizationService.GetResource("Order.Rental.FormattedDate"),
-                        rentalStartDate, rentalEndDate);
-                }
-                model.Items.Add(shipmentItemModel);
-            }
-
-            //order details model
-            model.Order = PrepareOrderDetailsModel(order);
-            
-            return model;
+            _customerService = customerService;
+            _orderModelFactory = orderModelFactory;
+            _orderProcessingService = orderProcessingService;
+            _orderService = orderService;
+            _paymentService = paymentService;
+            _pdfService = pdfService;
+            _shipmentService = shipmentService;
+            _webHelper = webHelper;
+            _workContext = workContext;
+            _rewardPointsSettings = rewardPointsSettings;
         }
 
         #endregion
@@ -524,176 +67,173 @@ namespace Nop.Web.Controllers
         #region Methods
 
         //My account / Orders
-        [NopHttpsRequirement(SslRequirement.Yes)]
-        public ActionResult CustomerOrders()
+        public virtual async Task<IActionResult> CustomerOrders()
         {
-            if (!_workContext.CurrentCustomer.IsRegistered())
-                return new HttpUnauthorizedResult();
+            if (!await _customerService.IsRegisteredAsync(await _workContext.GetCurrentCustomerAsync()))
+                return Challenge();
 
-            var model = PrepareCustomerOrderListModel();
+            var model = await _orderModelFactory.PrepareCustomerOrderListModelAsync();
             return View(model);
         }
 
         //My account / Orders / Cancel recurring order
         [HttpPost, ActionName("CustomerOrders")]
-        [PublicAntiForgery]
         [FormValueRequired(FormValueRequirement.StartsWith, "cancelRecurringPayment")]
-        public ActionResult CancelRecurringPayment(FormCollection form)
+        public virtual async Task<IActionResult> CancelRecurringPayment(IFormCollection form)
         {
-            if (!_workContext.CurrentCustomer.IsRegistered())
-                return new HttpUnauthorizedResult();
+            var customer = await _workContext.GetCurrentCustomerAsync();
+            if (!await _customerService.IsRegisteredAsync(customer))
+                return Challenge();
 
             //get recurring payment identifier
-            int recurringPaymentId = 0;
-            foreach (var formValue in form.AllKeys)
+            var recurringPaymentId = 0;
+            foreach (var formValue in form.Keys)
                 if (formValue.StartsWith("cancelRecurringPayment", StringComparison.InvariantCultureIgnoreCase))
-                    recurringPaymentId = Convert.ToInt32(formValue.Substring("cancelRecurringPayment".Length));
+                    recurringPaymentId = Convert.ToInt32(formValue["cancelRecurringPayment".Length..]);
 
-            var recurringPayment = _orderService.GetRecurringPaymentById(recurringPaymentId);
+            var recurringPayment = await _orderService.GetRecurringPaymentByIdAsync(recurringPaymentId);
             if (recurringPayment == null)
             {
                 return RedirectToRoute("CustomerOrders");
             }
 
-            if (_orderProcessingService.CanCancelRecurringPayment(_workContext.CurrentCustomer, recurringPayment))
+            if (await _orderProcessingService.CanCancelRecurringPaymentAsync(customer, recurringPayment))
             {
-                var errors = _orderProcessingService.CancelRecurringPayment(recurringPayment);
+                var errors = await _orderProcessingService.CancelRecurringPaymentAsync(recurringPayment);
 
-                var model = PrepareCustomerOrderListModel();
-                model.CancelRecurringPaymentErrors = errors;
+                var model = await _orderModelFactory.PrepareCustomerOrderListModelAsync();
+                model.RecurringPaymentErrors = errors;
 
                 return View(model);
             }
-            else
+
+            return RedirectToRoute("CustomerOrders");
+        }
+
+        //My account / Orders / Retry last recurring order
+        [HttpPost, ActionName("CustomerOrders")]
+        [FormValueRequired(FormValueRequirement.StartsWith, "retryLastPayment")]
+        public virtual async Task<IActionResult> RetryLastRecurringPayment(IFormCollection form)
+        {
+            var customer = await _workContext.GetCurrentCustomerAsync();
+            if (!await _customerService.IsRegisteredAsync(customer))
+                return Challenge();
+
+            //get recurring payment identifier
+            var recurringPaymentId = 0;
+            if (!form.Keys.Any(formValue => formValue.StartsWith("retryLastPayment", StringComparison.InvariantCultureIgnoreCase) &&
+                int.TryParse(formValue[(formValue.IndexOf('_') + 1)..], out recurringPaymentId)))
             {
                 return RedirectToRoute("CustomerOrders");
             }
+
+            var recurringPayment = await _orderService.GetRecurringPaymentByIdAsync(recurringPaymentId);
+            if (recurringPayment == null)
+                return RedirectToRoute("CustomerOrders");
+
+            if (!await _orderProcessingService.CanRetryLastRecurringPaymentAsync(customer, recurringPayment))
+                return RedirectToRoute("CustomerOrders");
+
+            var errors = await _orderProcessingService.ProcessNextRecurringPaymentAsync(recurringPayment);
+            var model = await _orderModelFactory.PrepareCustomerOrderListModelAsync();
+            model.RecurringPaymentErrors = errors.ToList();
+
+            return View(model);
         }
 
         //My account / Reward points
-        [NopHttpsRequirement(SslRequirement.Yes)]
-        public ActionResult CustomerRewardPoints(int? page)
+        public virtual async Task<IActionResult> CustomerRewardPoints(int? pageNumber)
         {
-            if (!_workContext.CurrentCustomer.IsRegistered())
-                return new HttpUnauthorizedResult();
+            if (!await _customerService.IsRegisteredAsync(await _workContext.GetCurrentCustomerAsync()))
+                return Challenge();
 
             if (!_rewardPointsSettings.Enabled)
                 return RedirectToRoute("CustomerInfo");
 
-            var customer = _workContext.CurrentCustomer;
-            var pageSize = _rewardPointsSettings.PageSize;
-            var model = new CustomerRewardPointsModel();
-            var list = _rewardPointService.GetRewardPointsHistory(customer.Id, pageIndex: --page ?? 0, pageSize: pageSize);
-
-            model.RewardPoints = list.Select(rph => 
-                new CustomerRewardPointsModel.RewardPointsHistoryModel
-                {
-                    Points = rph.Points,
-                    PointsBalance = rph.PointsBalance,
-                    Message = rph.Message,
-                    CreatedOn = _dateTimeHelper.ConvertToUserTime(rph.CreatedOnUtc, DateTimeKind.Utc)
-                }).ToList();
-
-            model.PagerModel = new PagerModel
-            {
-                PageSize = list.PageSize,
-                TotalRecords = list.TotalCount,
-                PageIndex = list.PageIndex,
-                ShowTotalSummary = true,
-                RouteActionName = "CustomerRewardPointsPaged",
-                UseRouteLinks = true,
-                RouteValues = new RewardPointsRouteValues { page = page ?? 0}
-            };
-
-            //current amount/balance
-            int rewardPointsBalance = _rewardPointService.GetRewardPointsBalance(customer.Id, _storeContext.CurrentStore.Id);
-            decimal rewardPointsAmountBase = _orderTotalCalculationService.ConvertRewardPointsToAmount(rewardPointsBalance);
-            decimal rewardPointsAmount = _currencyService.ConvertFromPrimaryStoreCurrency(rewardPointsAmountBase, _workContext.WorkingCurrency);
-            model.RewardPointsBalance = rewardPointsBalance;
-            model.RewardPointsAmount = _priceFormatter.FormatPrice(rewardPointsAmount, true, false);
-            //minimum amount/balance
-            int minimumRewardPointsBalance = _rewardPointsSettings.MinimumRewardPointsToUse;
-            decimal minimumRewardPointsAmountBase = _orderTotalCalculationService.ConvertRewardPointsToAmount(minimumRewardPointsBalance);
-            decimal minimumRewardPointsAmount = _currencyService.ConvertFromPrimaryStoreCurrency(minimumRewardPointsAmountBase, _workContext.WorkingCurrency);
-            model.MinimumRewardPointsBalance = minimumRewardPointsBalance;
-            model.MinimumRewardPointsAmount = _priceFormatter.FormatPrice(minimumRewardPointsAmount, true, false);
+            var model = await _orderModelFactory.PrepareCustomerRewardPointsAsync(pageNumber);
             return View(model);
         }
 
         //My account / Order details page
-        [NopHttpsRequirement(SslRequirement.Yes)]
-        public ActionResult Details(int orderId)
+        public virtual async Task<IActionResult> Details(int orderId)
         {
-            var order = _orderService.GetOrderById(orderId);
-            if (order == null || order.Deleted || _workContext.CurrentCustomer.Id != order.CustomerId)
-                return new HttpUnauthorizedResult();
+            var order = await _orderService.GetOrderByIdAsync(orderId);
+            var customer = await _workContext.GetCurrentCustomerAsync();
 
-            var model = PrepareOrderDetailsModel(order);
+            if (order == null || order.Deleted || customer.Id != order.CustomerId)
+                return Challenge();
 
+            var model = await _orderModelFactory.PrepareOrderDetailsModelAsync(order);
             return View(model);
         }
 
         //My account / Order details page / Print
-        [NopHttpsRequirement(SslRequirement.Yes)]
-        public ActionResult PrintOrderDetails(int orderId)
+        public virtual async Task<IActionResult> PrintOrderDetails(int orderId)
         {
-            var order = _orderService.GetOrderById(orderId);
-            if (order == null || order.Deleted || _workContext.CurrentCustomer.Id != order.CustomerId)
-                return new HttpUnauthorizedResult();
+            var order = await _orderService.GetOrderByIdAsync(orderId);
+            var customer = await _workContext.GetCurrentCustomerAsync();
+            if (order == null || order.Deleted || customer.Id != order.CustomerId)
+                return Challenge();
 
-            var model = PrepareOrderDetailsModel(order);
+            var model = await _orderModelFactory.PrepareOrderDetailsModelAsync(order);
             model.PrintMode = true;
 
             return View("Details", model);
         }
 
         //My account / Order details page / PDF invoice
-        public ActionResult GetPdfInvoice(int orderId)
+        [CheckLanguageSeoCode(true)]
+        public virtual async Task<IActionResult> GetPdfInvoice(int orderId)
         {
-            var order = _orderService.GetOrderById(orderId);
-            if (order == null || order.Deleted || _workContext.CurrentCustomer.Id != order.CustomerId)
-                return new HttpUnauthorizedResult();
+            var order = await _orderService.GetOrderByIdAsync(orderId);
+            var customer = await _workContext.GetCurrentCustomerAsync();
+            if (order == null || order.Deleted || customer.Id != order.CustomerId)
+                return Challenge();
 
-            var orders = new List<Order>();
-            orders.Add(order);
-            byte[] bytes;
-            using (var stream = new MemoryStream())
+            var orders = new List<Order>
             {
-                _pdfService.PrintOrdersToPdf(stream, orders, _workContext.WorkingLanguage.Id);
+                order
+            };
+            byte[] bytes;
+            await using (var stream = new MemoryStream())
+            {
+                await _pdfService.PrintOrdersToPdfAsync(stream, orders, (await _workContext.GetWorkingLanguageAsync()).Id);
                 bytes = stream.ToArray();
             }
-            return File(bytes, "application/pdf", string.Format("order_{0}.pdf", order.Id));
+            return File(bytes, MimeTypes.ApplicationPdf, $"order_{order.CustomOrderNumber}.pdf");
         }
 
         //My account / Order details page / re-order
-        public ActionResult ReOrder(int orderId)
+        public virtual async Task<IActionResult> ReOrder(int orderId)
         {
-            var order = _orderService.GetOrderById(orderId);
-            if (order == null || order.Deleted || _workContext.CurrentCustomer.Id != order.CustomerId)
-                return new HttpUnauthorizedResult();
+            var order = await _orderService.GetOrderByIdAsync(orderId);
+            var customer = await _workContext.GetCurrentCustomerAsync();
+            if (order == null || order.Deleted || customer.Id != order.CustomerId)
+                return Challenge();
 
-            _orderProcessingService.ReOrder(order);
+            await _orderProcessingService.ReOrderAsync(order);
             return RedirectToRoute("ShoppingCart");
         }
 
         //My account / Order details page / Complete payment
         [HttpPost, ActionName("Details")]
-        [PublicAntiForgery]
+        
         [FormValueRequired("repost-payment")]
-        public ActionResult RePostPayment(int orderId)
+        public virtual async Task<IActionResult> RePostPayment(int orderId)
         {
-            var order = _orderService.GetOrderById(orderId);
-            if (order == null || order.Deleted || _workContext.CurrentCustomer.Id != order.CustomerId)
-                return new HttpUnauthorizedResult();
+            var order = await _orderService.GetOrderByIdAsync(orderId);
+            var customer = await _workContext.GetCurrentCustomerAsync();
+            if (order == null || order.Deleted || customer.Id != order.CustomerId)
+                return Challenge();
 
-            if (!_paymentService.CanRePostProcessPayment(order))
+            if (!await _paymentService.CanRePostProcessPaymentAsync(order))
                 return RedirectToRoute("OrderDetails", new { orderId = orderId });
 
             var postProcessPaymentRequest = new PostProcessPaymentRequest
             {
                 Order = order
             };
-            _paymentService.PostProcessPayment(postProcessPaymentRequest);
+            await _paymentService.PostProcessPaymentAsync(postProcessPaymentRequest);
 
             if (_webHelper.IsRequestBeingRedirected || _webHelper.IsPostBeingDone)
             {
@@ -707,22 +247,22 @@ namespace Nop.Web.Controllers
         }
 
         //My account / Order details page / Shipment details page
-        [NopHttpsRequirement(SslRequirement.Yes)]
-        public ActionResult ShipmentDetails(int shipmentId)
+        public virtual async Task<IActionResult> ShipmentDetails(int shipmentId)
         {
-            var shipment = _shipmentService.GetShipmentById(shipmentId);
+            var shipment = await _shipmentService.GetShipmentByIdAsync(shipmentId);
             if (shipment == null)
-                return new HttpUnauthorizedResult();
+                return Challenge();
 
-            var order = shipment.Order;
-            if (order == null || order.Deleted || _workContext.CurrentCustomer.Id != order.CustomerId)
-                return new HttpUnauthorizedResult();
+            var order = await _orderService.GetOrderByIdAsync(shipment.OrderId);
+            var customer = await _workContext.GetCurrentCustomerAsync();
 
-            var model = PrepareShipmentDetailsModel(shipment);
+            if (order == null || order.Deleted || customer.Id != order.CustomerId)
+                return Challenge();
 
+            var model = await _orderModelFactory.PrepareShipmentDetailsModelAsync(shipment);
             return View(model);
         }
-
+        
         #endregion
     }
 }

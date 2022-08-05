@@ -1,85 +1,75 @@
 ﻿using System;
-using System.Web.Mvc;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Mvc;
 using Nop.Core;
-using Nop.Core.Domain.Customers;
 using Nop.Core.Domain.Messages;
 using Nop.Services.Localization;
 using Nop.Services.Messages;
-using Nop.Web.Models.Newsletter;
+using Nop.Web.Factories;
+using Nop.Web.Framework.Mvc.Filters;
 
 namespace Nop.Web.Controllers
 {
+    [AutoValidateAntiforgeryToken]
     public partial class NewsletterController : BasePublicController
     {
         private readonly ILocalizationService _localizationService;
-        private readonly IWorkContext _workContext;
+        private readonly INewsletterModelFactory _newsletterModelFactory;
         private readonly INewsLetterSubscriptionService _newsLetterSubscriptionService;
-        private readonly IWorkflowMessageService _workflowMessageService;
         private readonly IStoreContext _storeContext;
-
-        private readonly CustomerSettings _customerSettings;
+        private readonly IWorkContext _workContext;
+        private readonly IWorkflowMessageService _workflowMessageService;
 
         public NewsletterController(ILocalizationService localizationService,
-            IWorkContext workContext,
+            INewsletterModelFactory newsletterModelFactory,
             INewsLetterSubscriptionService newsLetterSubscriptionService,
-            IWorkflowMessageService workflowMessageService,
             IStoreContext storeContext,
-            CustomerSettings customerSettings)
+            IWorkContext workContext,
+            IWorkflowMessageService workflowMessageService)
         {
-            this._localizationService = localizationService;
-            this._workContext = workContext;
-            this._newsLetterSubscriptionService = newsLetterSubscriptionService;
-            this._workflowMessageService = workflowMessageService;
-            this._storeContext = storeContext;
-            this._customerSettings = customerSettings;
+            _localizationService = localizationService;
+            _newsletterModelFactory = newsletterModelFactory;
+            _newsLetterSubscriptionService = newsLetterSubscriptionService;
+            _storeContext = storeContext;
+            _workContext = workContext;
+            _workflowMessageService = workflowMessageService;
         }
 
-        [ChildActionOnly]
-        public ActionResult NewsletterBox()
-        {
-            if (_customerSettings.HideNewsletterBlock)
-                return Content("");
-
-            var model = new NewsletterBoxModel()
-            {
-                AllowToUnsubscribe = _customerSettings.NewsletterBlockAllowToUnsubscribe
-            };
-            return PartialView(model);
-        }
-
+        //available even when a store is closed
+        [CheckAccessClosedStore(true)]
         [HttpPost]
-        [ValidateInput(false)]
-        public ActionResult SubscribeNewsletter(string email, bool subscribe)
+        public virtual async Task<IActionResult> SubscribeNewsletter(string email, bool subscribe)
         {
             string result;
-            bool success = false;
+            var success = false;
 
             if (!CommonHelper.IsValidEmail(email))
             {
-                result = _localizationService.GetResource("Newsletter.Email.Wrong");
+                result = await _localizationService.GetResourceAsync("Newsletter.Email.Wrong");
             }
             else
             {
                 email = email.Trim();
-
-                var subscription = _newsLetterSubscriptionService.GetNewsLetterSubscriptionByEmailAndStoreId(email, _storeContext.CurrentStore.Id);
+                var store = await _storeContext.GetCurrentStoreAsync();
+                var subscription = await _newsLetterSubscriptionService.GetNewsLetterSubscriptionByEmailAndStoreIdAsync(email, store.Id);
+                var currentLanguage = await _workContext.GetWorkingLanguageAsync();
                 if (subscription != null)
                 {
                     if (subscribe)
                     {
                         if (!subscription.Active)
                         {
-                            _workflowMessageService.SendNewsLetterSubscriptionActivationMessage(subscription, _workContext.WorkingLanguage.Id);
+                            await _workflowMessageService.SendNewsLetterSubscriptionActivationMessageAsync(subscription, currentLanguage.Id);
                         }
-                        result = _localizationService.GetResource("Newsletter.SubscribeEmailSent");
+                        result = await _localizationService.GetResourceAsync("Newsletter.SubscribeEmailSent");
                     }
                     else
                     {
                         if (subscription.Active)
                         {
-                            _workflowMessageService.SendNewsLetterSubscriptionDeactivationMessage(subscription, _workContext.WorkingLanguage.Id);
+                            await _workflowMessageService.SendNewsLetterSubscriptionDeactivationMessageAsync(subscription, currentLanguage.Id);
                         }
-                        result = _localizationService.GetResource("Newsletter.UnsubscribeEmailSent");
+                        result = await _localizationService.GetResourceAsync("Newsletter.UnsubscribeEmailSent");
                     }
                 }
                 else if (subscribe)
@@ -89,17 +79,17 @@ namespace Nop.Web.Controllers
                         NewsLetterSubscriptionGuid = Guid.NewGuid(),
                         Email = email,
                         Active = false,
-                        StoreId = _storeContext.CurrentStore.Id,
+                        StoreId = store.Id,
                         CreatedOnUtc = DateTime.UtcNow
                     };
-                    _newsLetterSubscriptionService.InsertNewsLetterSubscription(subscription);
-                    _workflowMessageService.SendNewsLetterSubscriptionActivationMessage(subscription, _workContext.WorkingLanguage.Id);
+                    await _newsLetterSubscriptionService.InsertNewsLetterSubscriptionAsync(subscription);
+                    await _workflowMessageService.SendNewsLetterSubscriptionActivationMessageAsync(subscription, currentLanguage.Id);
 
-                    result = _localizationService.GetResource("Newsletter.SubscribeEmailSent");
+                    result = await _localizationService.GetResourceAsync("Newsletter.SubscribeEmailSent");
                 }
                 else
                 {
-                    result = _localizationService.GetResource("Newsletter.UnsubscribeEmailSent");
+                    result = await _localizationService.GetResourceAsync("Newsletter.UnsubscribeEmailSent");
                 }
                 success = true;
             }
@@ -111,26 +101,23 @@ namespace Nop.Web.Controllers
             });
         }
 
-        public ActionResult SubscriptionActivation(Guid token, bool active)
+        //available even when a store is closed
+        [CheckAccessClosedStore(true)]
+        public virtual async Task<IActionResult> SubscriptionActivation(Guid token, bool active)
         {
-            var subscription = _newsLetterSubscriptionService.GetNewsLetterSubscriptionByGuid(token);
+            var subscription = await _newsLetterSubscriptionService.GetNewsLetterSubscriptionByGuidAsync(token);
             if (subscription == null)
-                return RedirectToRoute("HomePage");
-
-            var model = new SubscriptionActivationModel();
+                return RedirectToRoute("Homepage");
 
             if (active)
             {
                 subscription.Active = true;
-                _newsLetterSubscriptionService.UpdateNewsLetterSubscription(subscription);
+                await _newsLetterSubscriptionService.UpdateNewsLetterSubscriptionAsync(subscription);
             }
             else
-                _newsLetterSubscriptionService.DeleteNewsLetterSubscription(subscription);
+                await _newsLetterSubscriptionService.DeleteNewsLetterSubscriptionAsync(subscription);
 
-            model.Result = active 
-                ?  _localizationService.GetResource("Newsletter.ResultActivated")
-                : _localizationService.GetResource("Newsletter.ResultDeactivated");
-
+            var model = await _newsletterModelFactory.PrepareSubscriptionActivationModelAsync(active);
             return View(model);
         }
     }

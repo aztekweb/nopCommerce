@@ -1,11 +1,15 @@
 ﻿@model PopularProductTagsModel
+
+@using Nop.Core.Domain.Catalog
+
 @{
-    Layout = "~/Views/Shared/_ColumnsTwo.cshtml";
+    Layout = "_ColumnsTwo";
 
     //title
-    Html.AddTitleParts(T("PageTitle.AllProductTags").Text);
+    NopHtml.AddTitleParts(T("PageTitle.AllProductTags").Text);
+    //page class
+    NopHtml.AppendPageCssClassParts("html-product-tags-all-page");
 }
-@using Nop.Web.Models.Catalog;
 <div class="page product-tags-all-page">
     <div class="page-title">
         <h1>@T("Products.Tags.All")</h1>
@@ -17,8 +21,9 @@
                 @foreach (var item in Model.Tags)
                 {
                     <li>
-                        <a href="@Url.RouteUrl("ProductsByTag", new { productTagId = item.Id, SeName = item.SeName })" class="producttag" style="font-size:@(Model.GetFontSize(item))%;">
-                        @item.Name</a>
+                        <a href="@(Url.RouteUrl<ProductTag>(new { SeName = item.SeName }))" class="producttag" style="font-size:@(Model.GetFontSize(item))%;">
+                            @item.Name
+                        </a>
                     </li>
                 }
             </ul>

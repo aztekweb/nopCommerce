@@ -1,13 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
-using FluentValidation.Attributes;
-using Nop.Web.Framework.Mvc;
-using Nop.Web.Validators.News;
+using Nop.Web.Framework.Models;
 
 namespace Nop.Web.Models.News
 {
-    [Validator(typeof(NewsItemValidator))]
-    public partial class NewsItemModel : BaseNopEntityModel
+    public partial record NewsItemModel : BaseNopEntityModel
     {
         public NewsItemModel()
         {
@@ -24,6 +21,7 @@ namespace Nop.Web.Models.News
         public string Short { get; set; }
         public string Full { get; set; }
         public bool AllowComments { get; set; }
+        public bool PreventNotRegisteredUsersToLeaveComments { get; set; }
         public int NumberOfComments { get; set; }
         public DateTime CreatedOn { get; set; }
 

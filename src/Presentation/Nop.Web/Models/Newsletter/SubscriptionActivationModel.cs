@@ -1,8 +1,8 @@
-﻿using Nop.Web.Framework.Mvc;
+﻿using Nop.Web.Framework.Models;
 
 namespace Nop.Web.Models.Newsletter
 {
-    public partial class SubscriptionActivationModel : BaseNopModel
+    public partial record SubscriptionActivationModel : BaseNopModel
     {
         public string Result { get; set; }
     }

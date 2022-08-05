@@ -1,9 +1,8 @@
-using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
-using Nop.Core.Data;
+using System.Threading.Tasks;
 using Nop.Core.Domain.Catalog;
-using Nop.Services.Events;
+using Nop.Data;
 
 namespace Nop.Services.Catalog
 {
@@ -15,22 +14,14 @@ namespace Nop.Services.Catalog
         #region Fields
 
         private readonly IRepository<ProductTemplate> _productTemplateRepository;
-        private readonly IEventPublisher _eventPublisher;
 
         #endregion
-        
+
         #region Ctor
 
-        /// <summary>
-        /// Ctor
-        /// </summary>
-        /// <param name="productTemplateRepository">Product template repository</param>
-        /// <param name="eventPublisher">Event published</param>
-        public ProductTemplateService(IRepository<ProductTemplate> productTemplateRepository,
-            IEventPublisher eventPublisher)
+        public ProductTemplateService(IRepository<ProductTemplate> productTemplateRepository)
         {
-            this._productTemplateRepository = productTemplateRepository;
-            this._eventPublisher = eventPublisher;
+            _productTemplateRepository = productTemplateRepository;
         }
 
         #endregion
@@ -41,28 +32,28 @@ namespace Nop.Services.Catalog
         /// Delete product template
         /// </summary>
         /// <param name="productTemplate">Product template</param>
-        public virtual void DeleteProductTemplate(ProductTemplate productTemplate)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteProductTemplateAsync(ProductTemplate productTemplate)
         {
-            if (productTemplate == null)
-                throw new ArgumentNullException("productTemplate");
-
-            _productTemplateRepository.Delete(productTemplate);
-
-            //event notification
-            _eventPublisher.EntityDeleted(productTemplate);
+            await _productTemplateRepository.DeleteAsync(productTemplate);
         }
 
         /// <summary>
         /// Gets all product templates
         /// </summary>
-        /// <returns>Product templates</returns>
-        public virtual IList<ProductTemplate> GetAllProductTemplates()
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the product templates
+        /// </returns>
+        public virtual async Task<IList<ProductTemplate>> GetAllProductTemplatesAsync()
         {
-            var query = from pt in _productTemplateRepository.Table
-                        orderby pt.DisplayOrder
-                        select pt;
+            var templates = await _productTemplateRepository.GetAllAsync(query =>
+            {
+                return from pt in query
+                    orderby pt.DisplayOrder, pt.Id
+                    select pt;
+            }, cache => default);
 
-            var templates = query.ToList();
             return templates;
         }
 
@@ -70,45 +61,35 @@ namespace Nop.Services.Catalog
         /// Gets a product template
         /// </summary>
         /// <param name="productTemplateId">Product template identifier</param>
-        /// <returns>Product template</returns>
-        public virtual ProductTemplate GetProductTemplateById(int productTemplateId)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the product template
+        /// </returns>
+        public virtual async Task<ProductTemplate> GetProductTemplateByIdAsync(int productTemplateId)
         {
-            if (productTemplateId == 0)
-                return null;
-
-            return _productTemplateRepository.GetById(productTemplateId);
+            return await _productTemplateRepository.GetByIdAsync(productTemplateId, cache => default);
         }
 
         /// <summary>
         /// Inserts product template
         /// </summary>
         /// <param name="productTemplate">Product template</param>
-        public virtual void InsertProductTemplate(ProductTemplate productTemplate)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task InsertProductTemplateAsync(ProductTemplate productTemplate)
         {
-            if (productTemplate == null)
-                throw new ArgumentNullException("productTemplate");
-
-            _productTemplateRepository.Insert(productTemplate);
-
-            //event notification
-            _eventPublisher.EntityInserted(productTemplate);
+            await _productTemplateRepository.InsertAsync(productTemplate);
         }
 
         /// <summary>
         /// Updates the product template
         /// </summary>
         /// <param name="productTemplate">Product template</param>
-        public virtual void UpdateProductTemplate(ProductTemplate productTemplate)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateProductTemplateAsync(ProductTemplate productTemplate)
         {
-            if (productTemplate == null)
-                throw new ArgumentNullException("productTemplate");
-
-            _productTemplateRepository.Update(productTemplate);
-
-            //event notification
-            _eventPublisher.EntityUpdated(productTemplate);
+            await _productTemplateRepository.UpdateAsync(productTemplate);
         }
-        
+
         #endregion
     }
 }

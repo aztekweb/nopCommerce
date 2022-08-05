@@ -1,12 +1,15 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Nop.Core;
-using Nop.Core.Data;
 using Nop.Core.Domain.Catalog;
+using Nop.Core.Domain.Common;
 using Nop.Core.Domain.Orders;
 using Nop.Core.Domain.Shipping;
-using Nop.Services.Events;
+using Nop.Data;
+using Nop.Services.Shipping.Pickup;
+using Nop.Services.Shipping.Tracking;
 
 namespace Nop.Services.Shipping
 {
@@ -17,31 +20,36 @@ namespace Nop.Services.Shipping
     {
         #region Fields
 
+        private readonly IPickupPluginManager _pickupPluginManager;
+        private readonly IRepository<Address> _addressRepository;
+        private readonly IRepository<Order> _orderRepository;
+        private readonly IRepository<OrderItem> _orderItemRepository;
+        private readonly IRepository<Product> _productRepository;
         private readonly IRepository<Shipment> _shipmentRepository;
         private readonly IRepository<ShipmentItem> _siRepository;
-        private readonly IRepository<OrderItem> _orderItemRepository;
-        private readonly IEventPublisher _eventPublisher;
-        
+        private readonly IShippingPluginManager _shippingPluginManager;
+
         #endregion
 
         #region Ctor
 
-        /// <summary>
-        /// Ctor
-        /// </summary>
-        /// <param name="shipmentRepository">Shipment repository</param>
-        /// <param name="siRepository">Shipment item repository</param>
-        /// <param name="orderItemRepository">Order item repository</param>
-        /// <param name="eventPublisher">Event published</param>
-        public ShipmentService(IRepository<Shipment> shipmentRepository,
-            IRepository<ShipmentItem> siRepository,
+        public ShipmentService(IPickupPluginManager pickupPluginManager,
+            IRepository<Address> addressRepository,
+            IRepository<Order> orderRepository,
             IRepository<OrderItem> orderItemRepository,
-            IEventPublisher eventPublisher)
+            IRepository<Product> productRepository,
+            IRepository<Shipment> shipmentRepository,
+            IRepository<ShipmentItem> siRepository,
+            IShippingPluginManager shippingPluginManager)
         {
-            this._shipmentRepository = shipmentRepository;
-            this._siRepository = siRepository;
-            this._orderItemRepository = orderItemRepository;
-            this._eventPublisher = eventPublisher;
+            _pickupPluginManager = pickupPluginManager;
+            _addressRepository = addressRepository;
+            _orderRepository = orderRepository;
+            _orderItemRepository = orderItemRepository;
+            _productRepository = productRepository;
+            _shipmentRepository = shipmentRepository;
+            _siRepository = siRepository;
+            _shippingPluginManager = shippingPluginManager;
         }
 
         #endregion
@@ -52,17 +60,12 @@ namespace Nop.Services.Shipping
         /// Deletes a shipment
         /// </summary>
         /// <param name="shipment">Shipment</param>
-        public virtual void DeleteShipment(Shipment shipment)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteShipmentAsync(Shipment shipment)
         {
-            if (shipment == null)
-                throw new ArgumentNullException("shipment");
-
-            _shipmentRepository.Delete(shipment);
-
-            //event notification
-            _eventPublisher.EntityDeleted(shipment);
+            await _shipmentRepository.DeleteAsync(shipment);
         }
-        
+
         /// <summary>
         /// Search shipments
         /// </summary>
@@ -70,58 +73,132 @@ namespace Nop.Services.Shipping
         /// <param name="warehouseId">Warehouse identifier, only shipments with products from a specified warehouse will be loaded; 0 to load all orders</param>
         /// <param name="shippingCountryId">Shipping country identifier; 0 to load all records</param>
         /// <param name="shippingStateId">Shipping state identifier; 0 to load all records</param>
+        /// <param name="shippingCounty">Shipping county; null to load all records</param>
         /// <param name="shippingCity">Shipping city; null to load all records</param>
         /// <param name="trackingNumber">Search by tracking number</param>
         /// <param name="loadNotShipped">A value indicating whether we should load only not shipped shipments</param>
+        /// <param name="loadNotReadyForPickup">A value indicating whether we should load only not ready for pickup shipments</param>
+        /// <param name="loadNotDelivered">A value indicating whether we should load only not delivered shipments</param>
+        /// <param name="orderId">Order identifier; 0 to load all records</param>
         /// <param name="createdFromUtc">Created date from (UTC); null to load all records</param>
         /// <param name="createdToUtc">Created date to (UTC); null to load all records</param>
         /// <param name="pageIndex">Page index</param>
         /// <param name="pageSize">Page size</param>
-        /// <returns>Shipments</returns>
-        public virtual IPagedList<Shipment> GetAllShipments(int vendorId = 0, int warehouseId = 0,
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the shipments
+        /// </returns>
+        public virtual async Task<IPagedList<Shipment>> GetAllShipmentsAsync(int vendorId = 0, int warehouseId = 0,
             int shippingCountryId = 0,
             int shippingStateId = 0,
+            string shippingCounty = null,
             string shippingCity = null,
             string trackingNumber = null,
             bool loadNotShipped = false,
+            bool loadNotReadyForPickup = false,
+            bool loadNotDelivered = false,
+            int orderId = 0,
             DateTime? createdFromUtc = null, DateTime? createdToUtc = null,
             int pageIndex = 0, int pageSize = int.MaxValue)
         {
-            var query = _shipmentRepository.Table;
-            if (!String.IsNullOrEmpty(trackingNumber))
-                query = query.Where(s => s.TrackingNumber.Contains(trackingNumber));
-            if (shippingCountryId > 0)
-                query = query.Where(s => s.Order.ShippingAddress.CountryId == shippingCountryId);
-            if (shippingStateId > 0)
-                query = query.Where(s => s.Order.ShippingAddress.StateProvinceId == shippingStateId);
-            if (!String.IsNullOrWhiteSpace(shippingCity))
-                query = query.Where(s => s.Order.ShippingAddress.City.Contains(shippingCity));
-            if (loadNotShipped)
-                query = query.Where(s => !s.ShippedDateUtc.HasValue);
-            if (createdFromUtc.HasValue)
-                query = query.Where(s => createdFromUtc.Value <= s.CreatedOnUtc);
-            if (createdToUtc.HasValue)
-                query = query.Where(s => createdToUtc.Value >= s.CreatedOnUtc);
-            query = query.Where(s => s.Order != null && !s.Order.Deleted);
-            if (vendorId > 0)
+            var shipments = await _shipmentRepository.GetAllPagedAsync(query =>
             {
-                var queryVendorOrderItems = from orderItem in _orderItemRepository.Table
-                                             where orderItem.Product.VendorId == vendorId
-                                             select orderItem.Id;
+                if (orderId > 0)
+                    query = query.Where(o => o.OrderId == orderId);
+
+                if (!string.IsNullOrEmpty(trackingNumber))
+                    query = query.Where(s => s.TrackingNumber.Contains(trackingNumber));
+
+                if (shippingCountryId > 0)
+                    query = from s in query
+                        join o in _orderRepository.Table on s.OrderId equals o.Id
+                        where _addressRepository.Table.Any(a =>
+                            a.Id == (o.PickupInStore ? o.PickupAddressId : o.ShippingAddressId) &&
+                            a.CountryId == shippingCountryId)
+                        select s;
+
+                if (shippingStateId > 0)
+                    query = from s in query
+                        join o in _orderRepository.Table on s.OrderId equals o.Id
+                        where _addressRepository.Table.Any(a =>
+                            a.Id == (o.PickupInStore ? o.PickupAddressId : o.ShippingAddressId) &&
+                            a.StateProvinceId == shippingStateId)
+                        select s;
+
+                if (!string.IsNullOrWhiteSpace(shippingCounty))
+                    query = from s in query
+                        join o in _orderRepository.Table on s.OrderId equals o.Id
+                        where _addressRepository.Table.Any(a =>
+                            a.Id == (o.PickupInStore ? o.PickupAddressId : o.ShippingAddressId) &&
+                            a.County.Contains(shippingCounty))
+                        select s;
+
+                if (!string.IsNullOrWhiteSpace(shippingCity))
+                    query = from s in query
+                        join o in _orderRepository.Table on s.OrderId equals o.Id
+                        where _addressRepository.Table.Any(a =>
+                            a.Id == (o.PickupInStore ? o.PickupAddressId : o.ShippingAddressId) &&
+                            a.City.Contains(shippingCity))
+                        select s;
+
+                if (loadNotShipped)
+                    query = from s in query
+                            join o in _orderRepository.Table on s.OrderId equals o.Id
+                            where !s.ShippedDateUtc.HasValue && !o.PickupInStore
+                            select s;
+
+                if (loadNotReadyForPickup)
+                    query = from s in query
+                            join o in _orderRepository.Table on s.OrderId equals o.Id
+                            where !s.ReadyForPickupDateUtc.HasValue && o.PickupInStore
+                            select s;
+
+                if (loadNotDelivered)
+                    query = query.Where(s => !s.DeliveryDateUtc.HasValue);
+
+                if (createdFromUtc.HasValue)
+                    query = query.Where(s => createdFromUtc.Value <= s.CreatedOnUtc);
+
+                if (createdToUtc.HasValue)
+                    query = query.Where(s => createdToUtc.Value >= s.CreatedOnUtc);
 
                 query = from s in query
-                        where queryVendorOrderItems.Intersect(s.ShipmentItems.Select(si => si.OrderItemId)).Any()
-                        select s;
-            }
-            if (warehouseId > 0)
-            {
-                query = from s in query
-                        where s.ShipmentItems.Any(si => si.WarehouseId == warehouseId)
-                        select s;
-            }
-            query = query.OrderByDescending(s => s.CreatedOnUtc);
+                    join o in _orderRepository.Table on s.OrderId equals o.Id
+                    where !o.Deleted
+                    select s;
 
-            var shipments = new PagedList<Shipment>(query, pageIndex, pageSize);
+                query = query.Distinct();
+
+                if (vendorId > 0)
+                {
+                    var queryVendorOrderItems = from orderItem in _orderItemRepository.Table
+                        join p in _productRepository.Table on orderItem.ProductId equals p.Id
+                        where p.VendorId == vendorId
+                        select orderItem.Id;
+
+                    query = from s in query
+                        join si in _siRepository.Table on s.Id equals si.ShipmentId
+                        where queryVendorOrderItems.Contains(si.OrderItemId)
+                        select s;
+
+                    query = query.Distinct();
+                }
+
+                if (warehouseId > 0)
+                {
+                    query = from s in query
+                        join si in _siRepository.Table on s.Id equals si.ShipmentId
+                        where si.WarehouseId == warehouseId
+                        select s;
+
+                    query = query.Distinct();
+                }
+
+                query = query.OrderByDescending(s => s.CreatedOnUtc);
+
+                return query;
+            }, pageIndex, pageSize);
+
             return shipments;
         }
 
@@ -129,132 +206,133 @@ namespace Nop.Services.Shipping
         /// Get shipment by identifiers
         /// </summary>
         /// <param name="shipmentIds">Shipment identifiers</param>
-        /// <returns>Shipments</returns>
-        public virtual IList<Shipment> GetShipmentsByIds(int[] shipmentIds)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the shipments
+        /// </returns>
+        public virtual async Task<IList<Shipment>> GetShipmentsByIdsAsync(int[] shipmentIds)
         {
-            if (shipmentIds == null || shipmentIds.Length == 0)
-                return new List<Shipment>();
-
-            var query = from o in _shipmentRepository.Table
-                        where shipmentIds.Contains(o.Id)
-                        select o;
-            var shipments = query.ToList();
-            //sort by passed identifiers
-            var sortedOrders = new List<Shipment>();
-            foreach (int id in shipmentIds)
-            {
-                var shipment = shipments.Find(x => x.Id == id);
-                if (shipment != null)
-                    sortedOrders.Add(shipment);
-            }
-            return sortedOrders;
+            return await _shipmentRepository.GetByIdsAsync(shipmentIds);
         }
 
         /// <summary>
         /// Gets a shipment
         /// </summary>
         /// <param name="shipmentId">Shipment identifier</param>
-        /// <returns>Shipment</returns>
-        public virtual Shipment GetShipmentById(int shipmentId)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the shipment
+        /// </returns>
+        public virtual async Task<Shipment> GetShipmentByIdAsync(int shipmentId)
         {
-            if (shipmentId == 0)
-                return null;
+            return await _shipmentRepository.GetByIdAsync(shipmentId);
+        }
 
-            return _shipmentRepository.GetById(shipmentId);
+        /// <summary>
+        /// Gets a list of order shipments
+        /// </summary>
+        /// <param name="orderId">Order identifier</param>
+        /// <param name="shipped">A value indicating whether to count only shipped or not shipped shipments; pass null to ignore</param>
+        /// <param name="readyForPickup">A value indicating whether to load only ready for pickup shipments; pass null to ignore</param>
+        /// <param name="vendorId">Vendor identifier; pass 0 to ignore</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the result
+        /// </returns>
+        public virtual async Task<IList<Shipment>> GetShipmentsByOrderIdAsync(int orderId, bool? shipped = null, bool? readyForPickup = null, int vendorId = 0)
+        {
+            if (orderId == 0)
+                return new List<Shipment>();
+
+            var shipments = _shipmentRepository.Table;
+
+            if (shipped.HasValue) 
+                shipments = shipments.Where(s => s.ShippedDateUtc.HasValue == shipped);
+
+            if (readyForPickup.HasValue)
+                shipments = shipments.Where(s => s.ReadyForPickupDateUtc.HasValue == readyForPickup);
+
+            return await shipments.Where(shipment => shipment.OrderId == orderId).ToListAsync();
         }
 
         /// <summary>
         /// Inserts a shipment
         /// </summary>
         /// <param name="shipment">Shipment</param>
-        public virtual void InsertShipment(Shipment shipment)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task InsertShipmentAsync(Shipment shipment)
         {
-            if (shipment == null)
-                throw new ArgumentNullException("shipment");
-
-            _shipmentRepository.Insert(shipment);
-
-            //event notification
-            _eventPublisher.EntityInserted(shipment);
+            await _shipmentRepository.InsertAsync(shipment);
         }
 
         /// <summary>
         /// Updates the shipment
         /// </summary>
         /// <param name="shipment">Shipment</param>
-        public virtual void UpdateShipment(Shipment shipment)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateShipmentAsync(Shipment shipment)
         {
-            if (shipment == null)
-                throw new ArgumentNullException("shipment");
+            await _shipmentRepository.UpdateAsync(shipment);
+        }
+        
+        /// <summary>
+        /// Gets a shipment items of shipment
+        /// </summary>
+        /// <param name="shipmentId">Shipment identifier</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the shipment items
+        /// </returns>
+        public virtual async Task<IList<ShipmentItem>> GetShipmentItemsByShipmentIdAsync(int shipmentId)
+        {
+            if (shipmentId == 0)
+                return null;
 
-            _shipmentRepository.Update(shipment);
-
-            //event notification
-            _eventPublisher.EntityUpdated(shipment);
+            return await _siRepository.Table.Where(si => si.ShipmentId == shipmentId).ToListAsync();
         }
 
+        /// <summary>
+        /// Inserts a shipment item
+        /// </summary>
+        /// <param name="shipmentItem">Shipment item</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task InsertShipmentItemAsync(ShipmentItem shipmentItem)
+        {
+            await _siRepository.InsertAsync(shipmentItem);
+        }
 
-        
         /// <summary>
         /// Deletes a shipment item
         /// </summary>
-        /// <param name="shipmentItem">Shipment item</param>
-        public virtual void DeleteShipmentItem(ShipmentItem shipmentItem)
+        /// <param name="shipmentItem">Shipment Item</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteShipmentItemAsync(ShipmentItem shipmentItem)
         {
-            if (shipmentItem == null)
-                throw new ArgumentNullException("shipmentItem");
+            await _siRepository.DeleteAsync(shipmentItem);
+        }
 
-            _siRepository.Delete(shipmentItem);
-
-            //event notification
-            _eventPublisher.EntityDeleted(shipmentItem);
+        /// <summary>
+        /// Updates a shipment item
+        /// </summary>
+        /// <param name="shipmentItem">Shipment item</param>
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateShipmentItemAsync(ShipmentItem shipmentItem)
+        {
+            await _siRepository.UpdateAsync(shipmentItem);
         }
 
         /// <summary>
         /// Gets a shipment item
         /// </summary>
         /// <param name="shipmentItemId">Shipment item identifier</param>
-        /// <returns>Shipment item</returns>
-        public virtual ShipmentItem GetShipmentItemById(int shipmentItemId)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the shipment item
+        /// </returns>
+        public virtual async Task<ShipmentItem> GetShipmentItemByIdAsync(int shipmentItemId)
         {
-            if (shipmentItemId == 0)
-                return null;
-
-            return _siRepository.GetById(shipmentItemId);
+            return await _siRepository.GetByIdAsync(shipmentItemId);
         }
-        
-        /// <summary>
-        /// Inserts a shipment item
-        /// </summary>
-        /// <param name="shipmentItem">Shipment item</param>
-        public virtual void InsertShipmentItem(ShipmentItem shipmentItem)
-        {
-            if (shipmentItem == null)
-                throw new ArgumentNullException("shipmentItem");
-
-            _siRepository.Insert(shipmentItem);
-
-            //event notification
-            _eventPublisher.EntityInserted(shipmentItem);
-        }
-
-        /// <summary>
-        /// Updates the shipment item
-        /// </summary>
-        /// <param name="shipmentItem">Shipment item</param>
-        public virtual void UpdateShipmentItem(ShipmentItem shipmentItem)
-        {
-            if (shipmentItem == null)
-                throw new ArgumentNullException("shipmentItem");
-
-            _siRepository.Update(shipmentItem);
-
-            //event notification
-            _eventPublisher.EntityUpdated(shipmentItem);
-        }
-
-
-
 
         /// <summary>
         /// Get quantity in shipments. For example, get planned quantity to be shipped
@@ -263,12 +341,15 @@ namespace Nop.Services.Shipping
         /// <param name="warehouseId">Warehouse identifier</param>
         /// <param name="ignoreShipped">Ignore already shipped shipments</param>
         /// <param name="ignoreDelivered">Ignore already delivered shipments</param>
-        /// <returns>Quantity</returns>
-        public virtual int GetQuantityInShipments(Product product, int warehouseId,
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the quantity
+        /// </returns>
+        public virtual async Task<int> GetQuantityInShipmentsAsync(Product product, int warehouseId,
             bool ignoreShipped, bool ignoreDelivered)
         {
             if (product == null)
-                throw new ArgumentNullException("product");
+                throw new ArgumentNullException(nameof(product));
 
             //only products with "use multiple warehouses" are handled this way
             if (product.ManageInventoryMethod != ManageInventoryMethod.ManageStock)
@@ -278,16 +359,33 @@ namespace Nop.Services.Shipping
 
             const int cancelledOrderStatusId = (int)OrderStatus.Cancelled;
 
-
             var query = _siRepository.Table;
-            query = query.Where(si => !si.Shipment.Order.Deleted);
-            query = query.Where(si => si.Shipment.Order.OrderStatusId != cancelledOrderStatusId);
+
+            query = from si in query
+                join s in _shipmentRepository.Table on si.ShipmentId equals s.Id
+                join o in _orderRepository.Table on s.OrderId equals o.Id
+                where !o.Deleted && o.OrderStatusId != cancelledOrderStatusId
+                    select si;
+
+            query = query.Distinct();
+
             if (warehouseId > 0)
                 query = query.Where(si => si.WarehouseId == warehouseId);
             if (ignoreShipped)
-                query = query.Where(si => !si.Shipment.ShippedDateUtc.HasValue);
+            {
+                query = from si in query
+                    join s in _shipmentRepository.Table on si.ShipmentId equals s.Id
+                    where !s.ShippedDateUtc.HasValue
+                    select si;
+            }
+
             if (ignoreDelivered)
-                query = query.Where(si => !si.Shipment.DeliveryDateUtc.HasValue);
+            {
+                query = from si in query
+                    join s in _shipmentRepository.Table on si.ShipmentId equals s.Id
+                    where !s.DeliveryDateUtc.HasValue
+                    select si;
+            }
 
             var queryProductOrderItems = from orderItem in _orderItemRepository.Table
                                          where orderItem.ProductId == product.Id
@@ -297,10 +395,34 @@ namespace Nop.Services.Shipping
                     select si;
 
             //some null validation
-            var result = Convert.ToInt32(query.Sum(si => (int?)si.Quantity));
+            var result = Convert.ToInt32(await query.SumAsync(si => (int?)si.Quantity));
             return result;
         }
 
+        /// <summary>
+        /// Get the tracker of the shipment
+        /// </summary>
+        /// <param name="shipment">Shipment</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the shipment tracker
+        /// </returns>
+        public virtual async Task<IShipmentTracker> GetShipmentTrackerAsync(Shipment shipment)
+        {
+            var order = await _orderRepository.GetByIdAsync(shipment.OrderId, cache => default);
+
+            if (!order.PickupInStore)
+            {
+                var shippingRateComputationMethod = await _shippingPluginManager
+                    .LoadPluginBySystemNameAsync(order.ShippingRateComputationMethodSystemName);
+
+                return await shippingRateComputationMethod?.GetShipmentTrackerAsync();
+            }
+
+            var pickupPointProvider = await _pickupPluginManager
+                .LoadPluginBySystemNameAsync(order.ShippingRateComputationMethodSystemName);
+            return await pickupPointProvider?.GetShipmentTrackerAsync();
+        }
 
         #endregion
     }

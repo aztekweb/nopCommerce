@@ -1,12 +1,15 @@
-using System;
+﻿using System;
 using System.Linq;
+using System.Threading.Tasks;
 using Nop.Core;
-using Nop.Core.Data;
 using Nop.Core.Domain.Customers;
 using Nop.Core.Domain.Orders;
 using Nop.Core.Domain.Payments;
 using Nop.Core.Domain.Shipping;
+using Nop.Data;
+using Nop.Data.Extensions;
 using Nop.Services.Helpers;
+using Nop.Services.Orders;
 
 namespace Nop.Services.Customers
 {
@@ -17,30 +20,24 @@ namespace Nop.Services.Customers
     {
         #region Fields
 
-        private readonly IRepository<Customer> _customerRepository;
-        private readonly IRepository<Order> _orderRepository;
         private readonly ICustomerService _customerService;
         private readonly IDateTimeHelper _dateTimeHelper;
-        
+        private readonly IRepository<Customer> _customerRepository;
+        private readonly IRepository<Order> _orderRepository;
+
         #endregion
 
         #region Ctor
-        
-        /// <summary>
-        /// Ctor
-        /// </summary>
-        /// <param name="customerRepository">Customer repository</param>
-        /// <param name="orderRepository">Order repository</param>
-        /// <param name="customerService">Customer service</param>
-        /// <param name="dateTimeHelper">Date time helper</param>
-        public CustomerReportService(IRepository<Customer> customerRepository,
-            IRepository<Order> orderRepository, ICustomerService customerService,
-            IDateTimeHelper dateTimeHelper)
+
+        public CustomerReportService(ICustomerService customerService,
+            IDateTimeHelper dateTimeHelper,
+            IRepository<Customer> customerRepository,
+            IRepository<Order> orderRepository)
         {
-            this._customerRepository = customerRepository;
-            this._orderRepository = orderRepository;
-            this._customerService = customerService;
-            this._dateTimeHelper = dateTimeHelper;
+            _customerService = customerService;
+            _dateTimeHelper = dateTimeHelper;
+            _customerRepository = customerRepository;
+            _orderRepository = orderRepository;
         }
 
         #endregion
@@ -58,9 +55,12 @@ namespace Nop.Services.Customers
         /// <param name="orderBy">1 - order by order total, 2 - order by number of orders</param>
         /// <param name="pageIndex">Page index</param>
         /// <param name="pageSize">Page size</param>
-        /// <returns>Report</returns>
-        public virtual IPagedList<BestCustomerReportLine> GetBestCustomersReport(DateTime? createdFromUtc,
-            DateTime? createdToUtc, OrderStatus? os, PaymentStatus? ps, ShippingStatus? ss, int orderBy,
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the report
+        /// </returns>
+        public virtual async Task<IPagedList<BestCustomerReportLine>> GetBestCustomersReportAsync(DateTime? createdFromUtc,
+            DateTime? createdToUtc, OrderStatus? os, PaymentStatus? ps, ShippingStatus? ss, OrderByEnum orderBy,
             int pageIndex = 0, int pageSize = 214748364)
         {
             int? orderStatusId = null;
@@ -81,8 +81,8 @@ namespace Nop.Services.Customers
                          (!orderStatusId.HasValue || orderStatusId == o.OrderStatusId) &&
                          (!paymentStatusId.HasValue || paymentStatusId == o.PaymentStatusId) &&
                          (!shippingStatusId.HasValue || shippingStatusId == o.ShippingStatusId) &&
-                         (!o.Deleted) &&
-                         (!c.Deleted)
+                         !o.Deleted &&
+                         !c.Deleted
                          select new { c, o };
 
             var query2 = from co in query1
@@ -93,29 +93,19 @@ namespace Nop.Services.Customers
                              OrderTotal = g.Sum(x => x.o.OrderTotal),
                              OrderCount = g.Count()
                          };
-            switch (orderBy)
+            query2 = orderBy switch
             {
-                case 1:
-                    {
-                        query2 = query2.OrderByDescending(x => x.OrderTotal);
-                    }
-                    break;
-                case 2:
-                    {
-                        query2 = query2.OrderByDescending(x => x.OrderCount);
-                    }
-                    break;
-                default:
-                    throw new ArgumentException("Wrong orderBy parameter", "orderBy");
-            }
-
-            var tmp = new PagedList<dynamic>(query2, pageIndex, pageSize);
+                OrderByEnum.OrderByQuantity => query2.OrderByDescending(x => x.OrderCount),
+                OrderByEnum.OrderByTotalAmount => query2.OrderByDescending(x => x.OrderTotal),
+                _ => throw new ArgumentException("Wrong orderBy parameter", nameof(orderBy)),
+            };
+            var tmp = await query2.ToPagedListAsync(pageIndex, pageSize);
             return new PagedList<BestCustomerReportLine>(tmp.Select(x => new BestCustomerReportLine
-                {
-                    CustomerId = x.CustomerId,
-                    OrderTotal = x.OrderTotal,
-                    OrderCount = x.OrderCount
-                }),
+            {
+                CustomerId = x.CustomerId,
+                OrderTotal = x.OrderTotal,
+                OrderCount = x.OrderCount
+            }).ToList(),
                 tmp.PageIndex, tmp.PageSize, tmp.TotalCount);
         }
 
@@ -123,24 +113,21 @@ namespace Nop.Services.Customers
         /// Gets a report of customers registered in the last days
         /// </summary>
         /// <param name="days">Customers registered in the last days</param>
-        /// <returns>Number of registered customers</returns>
-        public virtual int GetRegisteredCustomersReport(int days)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the number of registered customers
+        /// </returns>
+        public virtual async Task<int> GetRegisteredCustomersReportAsync(int days)
         {
-            DateTime date = _dateTimeHelper.ConvertToUserTime(DateTime.Now).AddDays(-days);
+            var date = (await _dateTimeHelper.ConvertToUserTimeAsync(DateTime.Now)).AddDays(-days);
 
-            var registeredCustomerRole = _customerService.GetCustomerRoleBySystemName(SystemCustomerRoleNames.Registered);
+            var registeredCustomerRole = await _customerService.GetCustomerRoleBySystemNameAsync(NopCustomerDefaults.RegisteredRoleName);
             if (registeredCustomerRole == null)
                 return 0;
 
-            var query = from c in _customerRepository.Table
-                        from cr in c.CustomerRoles
-                        where !c.Deleted &&
-                        cr.Id == registeredCustomerRole.Id &&
-                        c.CreatedOnUtc >= date 
-                        //&& c.CreatedOnUtc <= DateTime.UtcNow
-                        select c;
-            int count = query.Count();
-            return count;
+            return (await _customerService.GetAllCustomersAsync(
+                date,
+                customerRoleIds: new[] { registeredCustomerRole.Id })).Count;
         }
 
         #endregion

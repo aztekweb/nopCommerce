@@ -1,9 +1,9 @@
 ﻿using System;
-using Nop.Web.Framework.Mvc;
+using Nop.Web.Framework.Models;
 
 namespace Nop.Web.Models.News
 {
-    public partial class NewsCommentModel : BaseNopEntityModel
+    public partial record NewsCommentModel : BaseNopEntityModel
     {
         public int CustomerId { get; set; }
 

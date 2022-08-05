@@ -1,20 +1,23 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Web.Mvc;
+using System.ComponentModel.DataAnnotations;
+using Microsoft.AspNetCore.Mvc.Rendering;
 using Nop.Core.Domain.Catalog;
 using Nop.Core.Domain.Orders;
-using Nop.Web.Framework;
-using Nop.Web.Framework.Mvc;
+using Nop.Web.Framework.Models;
+using Nop.Web.Framework.Mvc.ModelBinding;
 using Nop.Web.Models.Media;
+using Nop.Web.Models.ShoppingCart;
 
 namespace Nop.Web.Models.Catalog
 {
-    public partial class ProductDetailsModel : BaseNopEntityModel
+    public partial record ProductDetailsModel : BaseNopEntityModel
     {
         public ProductDetailsModel()
         {
             DefaultPictureModel = new PictureModel();
             PictureModels = new List<PictureModel>();
+            VideoModels = new List<VideoModel>();
             GiftCard = new GiftCardModel();
             ProductPrice = new ProductPriceModel();
             AddToCart = new AddToCartModel();
@@ -23,10 +26,11 @@ namespace Nop.Web.Models.Catalog
             VendorModel = new VendorBriefInfoModel();
             Breadcrumb = new ProductBreadcrumbModel();
             ProductTags = new List<ProductTagModel>();
-            ProductSpecifications= new List<ProductSpecificationModel>();
-            ProductManufacturers = new List<ManufacturerModel>();
+            ProductSpecificationModel = new ProductSpecificationModel();
+            ProductManufacturers = new List<ManufacturerBriefInfoModel>();
             ProductReviewOverview = new ProductReviewOverviewModel();
             TierPrices = new List<TierPriceModel>();
+            ProductEstimateShipping = new ProductEstimateShippingModel();
         }
 
         //picture(s)
@@ -34,14 +38,19 @@ namespace Nop.Web.Models.Catalog
         public PictureModel DefaultPictureModel { get; set; }
         public IList<PictureModel> PictureModels { get; set; }
 
+        //videos
+        public IList<VideoModel> VideoModels { get; set; }
+
         public string Name { get; set; }
         public string ShortDescription { get; set; }
         public string FullDescription { get; set; }
-        public string ProductTemplateViewPath { get; set; }
         public string MetaKeywords { get; set; }
         public string MetaDescription { get; set; }
         public string MetaTitle { get; set; }
         public string SeName { get; set; }
+        public bool VisibleIndividually { get; set; }
+
+        public ProductType ProductType { get; set; }
 
         public bool ShowSku { get; set; }
         public string Sku { get; set; }
@@ -64,10 +73,13 @@ namespace Nop.Web.Models.Catalog
         public bool FreeShippingNotificationEnabled { get; set; }
         public string DeliveryDate { get; set; }
 
-
         public bool IsRental { get; set; }
         public DateTime? RentalStartDate { get; set; }
         public DateTime? RentalEndDate { get; set; }
+
+        public DateTime? AvailableEndDate { get; set; }
+
+        public ManageInventoryMethod ManageInventoryMethod { get; set; }
 
         public string StockAvailability { get; set; }
 
@@ -88,11 +100,13 @@ namespace Nop.Web.Models.Catalog
 
         public IList<ProductAttributeModel> ProductAttributes { get; set; }
 
-        public IList<ProductSpecificationModel> ProductSpecifications { get; set; }
+        public ProductSpecificationModel ProductSpecificationModel { get; set; }
 
-        public IList<ManufacturerModel> ProductManufacturers { get; set; }
+        public IList<ManufacturerBriefInfoModel> ProductManufacturers { get; set; }
 
         public ProductReviewOverviewModel ProductReviewOverview { get; set; }
+
+        public ProductEstimateShippingModel ProductEstimateShipping { get; set; }
 
         public IList<TierPriceModel> TierPrices { get; set; }
 
@@ -103,9 +117,13 @@ namespace Nop.Web.Models.Catalog
 
         public string CurrentStoreName { get; set; }
 
+        public bool InStock { get; set; }
+
+        public bool AllowAddingOnlyExistingAttributeCombinations { get; set; }
+
         #region Nested Classes
 
-        public partial class ProductBreadcrumbModel : BaseNopModel
+        public partial record ProductBreadcrumbModel : BaseNopModel
         {
             public ProductBreadcrumbModel()
             {
@@ -119,11 +137,11 @@ namespace Nop.Web.Models.Catalog
             public IList<CategorySimpleModel> CategoryBreadcrumb { get; set; }
         }
 
-        public partial class AddToCartModel : BaseNopModel
+        public partial record AddToCartModel : BaseNopModel
         {
             public AddToCartModel()
             {
-                this.AllowedQuantities = new List<SelectListItem>();
+                AllowedQuantities = new List<SelectListItem>();
             }
             public int ProductId { get; set; }
 
@@ -138,7 +156,7 @@ namespace Nop.Web.Models.Catalog
             public bool CustomerEntersPrice { get; set; }
             [NopResourceDisplayName("Products.EnterProductPrice")]
             public decimal CustomerEnteredPrice { get; set; }
-            public String CustomerEnteredPriceRange { get; set; }
+            public string CustomerEnteredPriceRange { get; set; }
 
             public bool DisableBuyButton { get; set; }
             public bool DisableWishlistButton { get; set; }
@@ -149,13 +167,14 @@ namespace Nop.Web.Models.Catalog
             //pre-order
             public bool AvailableForPreOrder { get; set; }
             public DateTime? PreOrderAvailabilityStartDateTimeUtc { get; set; }
+            public string PreOrderAvailabilityStartDateTimeUserTime { get; set; }
 
             //updating existing shopping cart or wishlist item?
             public int UpdatedShoppingCartItemId { get; set; }
             public ShoppingCartType? UpdateShoppingCartItemType { get; set; }
         }
 
-        public partial class ProductPriceModel : BaseNopModel
+        public partial record ProductPriceModel : BaseNopModel
         {
             /// <summary>
             /// The currency (in 3-letter ISO 4217 format) of the offer price 
@@ -163,10 +182,12 @@ namespace Nop.Web.Models.Catalog
             public string CurrencyCode { get; set; }
 
             public string OldPrice { get; set; }
+            public decimal? OldPriceValue { get; set; }
 
             public string Price { get; set; }
-            public string PriceWithDiscount { get; set; }
             public decimal PriceValue { get; set; }
+            public string PriceWithDiscount { get; set; }
+            public decimal? PriceWithDiscountValue { get; set; }
 
             public bool CustomerEntersPrice { get; set; }
 
@@ -179,6 +200,7 @@ namespace Nop.Web.Models.Catalog
             //rental
             public bool IsRental { get; set; }
             public string RentalPrice { get; set; }
+            public decimal? RentalPriceValue { get; set; }
 
             /// <summary>
             /// A value indicating whether we should display tax/shipping info (used in Germany)
@@ -188,39 +210,42 @@ namespace Nop.Web.Models.Catalog
             /// PAngV baseprice (used in Germany)
             /// </summary>
             public string BasePricePAngV { get; set; }
+            public decimal? BasePricePAngVValue { get; set; }
         }
 
-        public partial class GiftCardModel : BaseNopModel
+        public partial record GiftCardModel : BaseNopModel
         {
             public bool IsGiftCard { get; set; }
 
             [NopResourceDisplayName("Products.GiftCard.RecipientName")]
-            [AllowHtml]
             public string RecipientName { get; set; }
+
             [NopResourceDisplayName("Products.GiftCard.RecipientEmail")]
-            [AllowHtml]
+            [DataType(DataType.EmailAddress)]
             public string RecipientEmail { get; set; }
+
             [NopResourceDisplayName("Products.GiftCard.SenderName")]
-            [AllowHtml]
             public string SenderName { get; set; }
+
             [NopResourceDisplayName("Products.GiftCard.SenderEmail")]
-            [AllowHtml]
+            [DataType(DataType.EmailAddress)]
             public string SenderEmail { get; set; }
+
             [NopResourceDisplayName("Products.GiftCard.Message")]
-            [AllowHtml]
             public string Message { get; set; }
 
             public GiftCardType GiftCardType { get; set; }
         }
 
-        public partial class TierPriceModel : BaseNopModel
+        public partial record TierPriceModel : BaseNopModel
         {
             public string Price { get; set; }
+            public decimal PriceValue { get; set; }
 
             public int Quantity { get; set; }
         }
 
-        public partial class ProductAttributeModel : BaseNopEntityModel
+        public partial record ProductAttributeModel : BaseNopEntityModel
         {
             public ProductAttributeModel()
             {
@@ -270,15 +295,13 @@ namespace Nop.Web.Models.Catalog
             public AttributeControlType AttributeControlType { get; set; }
 
             public IList<ProductAttributeValueModel> Values { get; set; }
-
         }
 
-        public partial class ProductAttributeValueModel : BaseNopEntityModel
+        public partial record ProductAttributeValueModel : BaseNopEntityModel
         {
             public ProductAttributeValueModel()
             {
                 ImageSquaresPictureModel = new PictureModel();
-                PictureModel = new PictureModel();
             }
 
             public string Name { get; set; }
@@ -290,14 +313,25 @@ namespace Nop.Web.Models.Catalog
 
             public string PriceAdjustment { get; set; }
 
+            public bool PriceAdjustmentUsePercentage { get; set; }
+
             public decimal PriceAdjustmentValue { get; set; }
 
             public bool IsPreSelected { get; set; }
 
-            //picture model is used when we want to override a default product picture when some attribute is selected
-            public PictureModel PictureModel { get; set; }
+            //product picture ID (associated to this value)
+            public int PictureId { get; set; }
+
+            public bool CustomerEntersQty { get; set; }
+
+            public int Quantity { get; set; }
         }
 
-		#endregion
+        public partial record ProductEstimateShippingModel : EstimateShippingModel
+        {
+            public int ProductId { get; set; }
+        }
+
+        #endregion
     }
 }

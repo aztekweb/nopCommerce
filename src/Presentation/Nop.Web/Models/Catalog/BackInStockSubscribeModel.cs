@@ -1,8 +1,8 @@
-﻿using Nop.Web.Framework.Mvc;
+﻿using Nop.Web.Framework.Models;
 
 namespace Nop.Web.Models.Catalog
 {
-    public partial class BackInStockSubscribeModel : BaseNopModel
+    public partial record BackInStockSubscribeModel : BaseNopModel
     {
         public int ProductId { get; set; }
         public string ProductName { get; set; }

@@ -1,159 +1,156 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Nop.Core;
-using Nop.Core.Data;
 using Nop.Core.Domain.Messages;
+using Nop.Data;
 using Nop.Services.Customers;
-using Nop.Services.Events;
 
 namespace Nop.Services.Messages
 {
+    /// <summary>
+    /// Campaign service
+    /// </summary>
     public partial class CampaignService : ICampaignService
     {
-        private readonly IRepository<Campaign> _campaignRepository;
+        #region Fields
+
+        private readonly ICustomerService _customerService;
         private readonly IEmailSender _emailSender;
         private readonly IMessageTokenProvider _messageTokenProvider;
-        private readonly ITokenizer _tokenizer;
         private readonly IQueuedEmailService _queuedEmailService;
-        private readonly ICustomerService _customerService;
+        private readonly IRepository<Campaign> _campaignRepository;
         private readonly IStoreContext _storeContext;
-        private readonly IEventPublisher _eventPublisher;
+        private readonly ITokenizer _tokenizer;
 
-        /// <summary>
-        /// Ctor
-        /// </summary>
-        /// <param name="campaignRepository">Campaign repository</param>
-        /// <param name="emailSender">Email sender</param>
-        /// <param name="messageTokenProvider">Message token provider</param>
-        /// <param name="tokenizer">Tokenizer</param>
-        /// <param name="queuedEmailService">Queued email service</param>
-        /// <param name="customerService">Customer service</param>
-        /// <param name="storeContext">Store context</param>
-        /// <param name="eventPublisher">Event published</param>
-        public CampaignService(IRepository<Campaign> campaignRepository,
-            IEmailSender emailSender, IMessageTokenProvider messageTokenProvider,
-            ITokenizer tokenizer, IQueuedEmailService queuedEmailService,
-            ICustomerService customerService, IStoreContext storeContext,
-            IEventPublisher eventPublisher)
+        #endregion
+
+        #region Ctor
+
+        public CampaignService(ICustomerService customerService,
+            IEmailSender emailSender,
+            IMessageTokenProvider messageTokenProvider,
+            IQueuedEmailService queuedEmailService,
+            IRepository<Campaign> campaignRepository,
+            IStoreContext storeContext,
+            ITokenizer tokenizer)
         {
-            this._campaignRepository = campaignRepository;
-            this._emailSender = emailSender;
-            this._messageTokenProvider = messageTokenProvider;
-            this._tokenizer = tokenizer;
-            this._queuedEmailService = queuedEmailService;
-            this._storeContext = storeContext;
-            this._customerService = customerService;
-            this._eventPublisher = eventPublisher;
+            _customerService = customerService;
+            _emailSender = emailSender;
+            _messageTokenProvider = messageTokenProvider;
+            _queuedEmailService = queuedEmailService;
+            _campaignRepository = campaignRepository;
+            _storeContext = storeContext;
+            _tokenizer = tokenizer;
         }
+
+        #endregion
+
+        #region Methods
 
         /// <summary>
         /// Inserts a campaign
         /// </summary>
         /// <param name="campaign">Campaign</param>        
-        public virtual void InsertCampaign(Campaign campaign)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task InsertCampaignAsync(Campaign campaign)
         {
-            if (campaign == null)
-                throw new ArgumentNullException("campaign");
-
-            _campaignRepository.Insert(campaign);
-
-            //event notification
-            _eventPublisher.EntityInserted(campaign);
+            await _campaignRepository.InsertAsync(campaign);
         }
 
         /// <summary>
         /// Updates a campaign
         /// </summary>
         /// <param name="campaign">Campaign</param>
-        public virtual void UpdateCampaign(Campaign campaign)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task UpdateCampaignAsync(Campaign campaign)
         {
-            if (campaign == null)
-                throw new ArgumentNullException("campaign");
-
-            _campaignRepository.Update(campaign);
-
-            //event notification
-            _eventPublisher.EntityUpdated(campaign);
+            await _campaignRepository.UpdateAsync(campaign);
         }
 
         /// <summary>
         /// Deleted a queued email
         /// </summary>
         /// <param name="campaign">Campaign</param>
-        public virtual void DeleteCampaign(Campaign campaign)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task DeleteCampaignAsync(Campaign campaign)
         {
-            if (campaign == null)
-                throw new ArgumentNullException("campaign");
-
-            _campaignRepository.Delete(campaign);
-
-            //event notification
-            _eventPublisher.EntityDeleted(campaign);
+            await _campaignRepository.DeleteAsync(campaign);
         }
 
         /// <summary>
         /// Gets a campaign by identifier
         /// </summary>
         /// <param name="campaignId">Campaign identifier</param>
-        /// <returns>Campaign</returns>
-        public virtual Campaign GetCampaignById(int campaignId)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the campaign
+        /// </returns>
+        public virtual async Task<Campaign> GetCampaignByIdAsync(int campaignId)
         {
-            if (campaignId == 0)
-                return null;
-
-            return _campaignRepository.GetById(campaignId);
-
+            return await _campaignRepository.GetByIdAsync(campaignId, cache => default);
         }
 
         /// <summary>
         /// Gets all campaigns
         /// </summary>
-        /// <returns>Campaigns</returns>
-        public virtual IList<Campaign> GetAllCampaigns()
+        /// <param name="storeId">Store identifier; 0 to load all records</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the campaigns
+        /// </returns>
+        public virtual async Task<IList<Campaign>> GetAllCampaignsAsync(int storeId = 0)
         {
+            var campaigns = await _campaignRepository.GetAllAsync(query =>
+            {
+                if (storeId > 0) 
+                    query = query.Where(c => c.StoreId == storeId);
 
-            var query = from c in _campaignRepository.Table
-                        orderby c.CreatedOnUtc
-                        select c;
-            var campaigns = query.ToList();
+                query = query.OrderBy(c => c.CreatedOnUtc);
+
+                return query;
+            });
 
             return campaigns;
         }
-        
+
         /// <summary>
         /// Sends a campaign to specified emails
         /// </summary>
         /// <param name="campaign">Campaign</param>
         /// <param name="emailAccount">Email account</param>
         /// <param name="subscriptions">Subscriptions</param>
-        /// <returns>Total emails sent</returns>
-        public virtual int SendCampaign(Campaign campaign, EmailAccount emailAccount,
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the otal emails sent
+        /// </returns>
+        public virtual async Task<int> SendCampaignAsync(Campaign campaign, EmailAccount emailAccount,
             IEnumerable<NewsLetterSubscription> subscriptions)
         {
             if (campaign == null)
-                throw new ArgumentNullException("campaign");
+                throw new ArgumentNullException(nameof(campaign));
 
             if (emailAccount == null)
-                throw new ArgumentNullException("emailAccount");
+                throw new ArgumentNullException(nameof(emailAccount));
 
-            int totalEmailsSent = 0;
+            var totalEmailsSent = 0;
 
             foreach (var subscription in subscriptions)
             {
-                var customer = _customerService.GetCustomerByEmail(subscription.Email);
+                var customer = await _customerService.GetCustomerByEmailAsync(subscription.Email);
                 //ignore deleted or inactive customers when sending newsletter campaigns
                 if (customer != null && (!customer.Active || customer.Deleted))
                     continue;
 
                 var tokens = new List<Token>();
-                _messageTokenProvider.AddStoreTokens(tokens, _storeContext.CurrentStore, emailAccount);
-                _messageTokenProvider.AddNewsLetterSubscriptionTokens(tokens, subscription);
+                await _messageTokenProvider.AddStoreTokensAsync(tokens, await _storeContext.GetCurrentStoreAsync(), emailAccount);
+                await _messageTokenProvider.AddNewsLetterSubscriptionTokensAsync(tokens, subscription);
                 if (customer != null)
-                    _messageTokenProvider.AddCustomerTokens(tokens, customer);
+                    await _messageTokenProvider.AddCustomerTokensAsync(tokens, customer);
 
-                string subject = _tokenizer.Replace(campaign.Subject, tokens, false);
-                string body = _tokenizer.Replace(campaign.Body, tokens, true);
+                var subject = _tokenizer.Replace(campaign.Subject, tokens, false);
+                var body = _tokenizer.Replace(campaign.Body, tokens, true);
 
                 var email = new QueuedEmail
                 {
@@ -167,9 +164,10 @@ namespace Nop.Services.Messages
                     EmailAccountId = emailAccount.Id,
                     DontSendBeforeDateUtc = campaign.DontSendBeforeDateUtc
                 };
-                _queuedEmailService.InsertQueuedEmail(email);
+                await _queuedEmailService.InsertQueuedEmailAsync(email);
                 totalEmailsSent++;
             }
+
             return totalEmailsSent;
         }
 
@@ -179,24 +177,27 @@ namespace Nop.Services.Messages
         /// <param name="campaign">Campaign</param>
         /// <param name="emailAccount">Email account</param>
         /// <param name="email">Email</param>
-        public virtual void SendCampaign(Campaign campaign, EmailAccount emailAccount, string email)
+        /// <returns>A task that represents the asynchronous operation</returns>
+        public virtual async Task SendCampaignAsync(Campaign campaign, EmailAccount emailAccount, string email)
         {
             if (campaign == null)
-                throw new ArgumentNullException("campaign");
+                throw new ArgumentNullException(nameof(campaign));
 
             if (emailAccount == null)
-                throw new ArgumentNullException("emailAccount");
+                throw new ArgumentNullException(nameof(emailAccount));
 
             var tokens = new List<Token>();
-            _messageTokenProvider.AddStoreTokens(tokens, _storeContext.CurrentStore, emailAccount);
-            var customer = _customerService.GetCustomerByEmail(email);
+            await _messageTokenProvider.AddStoreTokensAsync(tokens, await _storeContext.GetCurrentStoreAsync(), emailAccount);
+            var customer = await _customerService.GetCustomerByEmailAsync(email);
             if (customer != null)
-                _messageTokenProvider.AddCustomerTokens(tokens, customer);
-            
-            string subject = _tokenizer.Replace(campaign.Subject, tokens, false);
-            string body = _tokenizer.Replace(campaign.Body, tokens, true);
+                await _messageTokenProvider.AddCustomerTokensAsync(tokens, customer);
 
-            _emailSender.SendEmail(emailAccount, subject, body, emailAccount.Email, emailAccount.DisplayName, email, null);
+            var subject = _tokenizer.Replace(campaign.Subject, tokens, false);
+            var body = _tokenizer.Replace(campaign.Body, tokens, true);
+
+            await _emailSender.SendEmailAsync(emailAccount, subject, body, emailAccount.Email, emailAccount.DisplayName, email, null);
         }
+
+        #endregion
     }
 }

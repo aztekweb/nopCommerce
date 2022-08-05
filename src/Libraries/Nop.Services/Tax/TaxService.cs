@@ -1,17 +1,22 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using Nop.Core;
 using Nop.Core.Domain.Catalog;
 using Nop.Core.Domain.Common;
 using Nop.Core.Domain.Customers;
 using Nop.Core.Domain.Directory;
 using Nop.Core.Domain.Orders;
+using Nop.Core.Domain.Shipping;
 using Nop.Core.Domain.Tax;
-using Nop.Core.Plugins;
+using Nop.Core.Events;
 using Nop.Services.Common;
+using Nop.Services.Customers;
 using Nop.Services.Directory;
+using Nop.Services.Logging;
+using Nop.Services.Tax.Events;
 
 namespace Nop.Services.Tax
 {
@@ -22,47 +27,60 @@ namespace Nop.Services.Tax
     {
         #region Fields
 
-        private readonly IAddressService _addressService;
-        private readonly IWorkContext _workContext;
-        private readonly TaxSettings _taxSettings;
-        private readonly IPluginFinder _pluginFinder;
-        private readonly IGeoLookupService _geoLookupService;
-        private readonly ICountryService _countryService;
-        private readonly CustomerSettings _customerSettings;
-        private readonly AddressSettings _addressSettings;
+        protected readonly AddressSettings _addressSettings;
+        protected readonly CustomerSettings _customerSettings;
+        protected readonly IAddressService _addressService;
+        protected readonly ICountryService _countryService;
+        protected readonly ICustomerService _customerService;
+        protected readonly IEventPublisher _eventPublisher;
+        protected readonly IGenericAttributeService _genericAttributeService;
+        protected readonly IGeoLookupService _geoLookupService;
+        protected readonly ILogger _logger;
+        protected readonly IStateProvinceService _stateProvinceService;
+        protected readonly IStoreContext _storeContext;
+        protected readonly ITaxPluginManager _taxPluginManager;
+        protected readonly IWebHelper _webHelper;
+        protected readonly IWorkContext _workContext;
+        protected readonly ShippingSettings _shippingSettings;
+        protected readonly TaxSettings _taxSettings;
 
         #endregion
 
         #region Ctor
 
-        /// <summary>
-        /// Ctor
-        /// </summary>
-        /// <param name="addressService">Address service</param>
-        /// <param name="workContext">Work context</param>
-        /// <param name="taxSettings">Tax settings</param>
-        /// <param name="pluginFinder">Plugin finder</param>
-        /// <param name="geoLookupService">GEO lookup service</param>
-        /// <param name="countryService">Country service</param>
-        /// <param name="customerSettings">Customer settings</param>
-        /// <param name="addressSettings">Address settings</param>
-        public TaxService(IAddressService addressService,
-            IWorkContext workContext,
-            TaxSettings taxSettings,
-            IPluginFinder pluginFinder,
-            IGeoLookupService geoLookupService,
-            ICountryService countryService,
+        public TaxService(AddressSettings addressSettings,
             CustomerSettings customerSettings,
-            AddressSettings addressSettings)
+            IAddressService addressService,
+            ICountryService countryService,
+            ICustomerService customerService,
+            IEventPublisher eventPublisher,
+            IGenericAttributeService genericAttributeService,
+            IGeoLookupService geoLookupService,
+            ILogger logger,
+            IStateProvinceService stateProvinceService,
+            IStoreContext storeContext,
+            ITaxPluginManager taxPluginManager,
+            IWebHelper webHelper,
+            IWorkContext workContext,
+            ShippingSettings shippingSettings,
+            TaxSettings taxSettings)
         {
-            this._addressService = addressService;
-            this._workContext = workContext;
-            this._taxSettings = taxSettings;
-            this._pluginFinder = pluginFinder;
-            this._geoLookupService = geoLookupService;
-            this._countryService = countryService;
-            this._customerSettings = customerSettings;
-            this._addressSettings = addressSettings;
+            _addressSettings = addressSettings;
+            _customerSettings = customerSettings;
+            _addressService = addressService;
+            _countryService = countryService;
+            _customerService = customerService;
+            _eventPublisher = eventPublisher;
+            _genericAttributeService = genericAttributeService;
+            _geoLookupService = geoLookupService;
+            _logger = logger;
+            _stateProvinceService = stateProvinceService;
+            _storeContext = storeContext;
+            _taxPluginManager = taxPluginManager;
+            _webHelper = webHelper;
+            _workContext = workContext;
+            _shippingSettings = shippingSettings;
+            _taxSettings = taxSettings;
         }
 
         #endregion
@@ -73,32 +91,31 @@ namespace Nop.Services.Tax
         /// Get a value indicating whether a customer is consumer (a person, not a company) located in Europe Union
         /// </summary>
         /// <param name="customer">Customer</param>
-        /// <returns>Result</returns>
-        protected virtual bool IsEuConsumer(Customer customer)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the result
+        /// </returns>
+        protected virtual async Task<bool> IsEuConsumerAsync(Customer customer)
         {
             if (customer == null)
-                throw new ArgumentNullException("customer");
+                throw new ArgumentNullException(nameof(customer));
 
             Country country = null;
 
             //get country from billing address
-            if (_addressSettings.CountryEnabled && customer.BillingAddress != null)
-                country = customer.BillingAddress.Country;
+            if (_addressSettings.CountryEnabled && await _customerService.GetCustomerShippingAddressAsync(customer) is Address billingAddress)
+                country = await _countryService.GetCountryByAddressAsync(billingAddress);
 
             //get country specified during registration?
             if (country == null && _customerSettings.CountryEnabled)
-            {
-                var countryId = customer.GetAttribute<int>(SystemCustomerAttributeNames.CountryId);
-                country = _countryService.GetCountryById(countryId);
-            }
+                country = await _countryService.GetCountryByIdAsync(customer.CountryId);
 
             //get country by IP address
             if (country == null)
             {
-                var ipAddress = customer.LastIpAddress;
-                //ipAddress = _webHelper.GetCurrentIpAddress();
+                var ipAddress = _webHelper.GetCurrentIpAddress();
                 var countryIsoCode = _geoLookupService.LookupCountryIsoCode(ipAddress);
-                country = _countryService.GetCountryByTwoLetterIsoCode(countryIsoCode);
+                country = await _countryService.GetCountryByTwoLetterIsoCodeAsync(countryIsoCode);
             }
 
             //we cannot detect country
@@ -110,91 +127,133 @@ namespace Nop.Services.Tax
                 return false;
 
             //company (business) or consumer?
-            var customerVatStatus = (VatNumberStatus)customer.GetAttribute<int>(SystemCustomerAttributeNames.VatNumberStatusId);
+            var customerVatStatus = (VatNumberStatus)customer.VatNumberStatusId;
             if (customerVatStatus == VatNumberStatus.Valid)
                 return false;
-
-            //TODO: use specified company name? (both address and registration one)
 
             //consumer
             return true;
         }
 
         /// <summary>
-        /// Create request for tax calculation
+        /// Gets a default tax address
+        /// </summary>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the address
+        /// </returns>
+        protected virtual async Task<Address> LoadDefaultTaxAddressAsync()
+        {
+            var addressId = _taxSettings.DefaultTaxAddressId;
+
+            return await _addressService.GetAddressByIdAsync(addressId);
+        }
+
+        /// <summary>
+        /// Gets or sets a pickup point address for tax calculation
+        /// </summary>
+        /// <param name="pickupPoint">Pickup point</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the address
+        /// </returns>
+        protected virtual async Task<Address> LoadPickupPointTaxAddressAsync(PickupPoint pickupPoint)
+        {
+            if (pickupPoint == null)
+                throw new ArgumentNullException(nameof(pickupPoint));
+
+            var country = await _countryService.GetCountryByTwoLetterIsoCodeAsync(pickupPoint.CountryCode);
+            var state = await _stateProvinceService.GetStateProvinceByAbbreviationAsync(pickupPoint.StateAbbreviation, country?.Id);
+
+            return new Address
+            {
+                CountryId = country?.Id ?? 0,
+                StateProvinceId = state?.Id ?? 0,
+                County = pickupPoint.County,
+                City = pickupPoint.City,
+                Address1 = pickupPoint.Address,
+                ZipPostalCode = pickupPoint.ZipPostalCode
+            };
+        }
+
+        /// <summary>
+        /// Prepare request to get tax rate
         /// </summary>
         /// <param name="product">Product</param>
         /// <param name="taxCategoryId">Tax category identifier</param>
         /// <param name="customer">Customer</param>
-        /// <returns>Package for tax calculation</returns>
-        protected virtual CalculateTaxRequest CreateCalculateTaxRequest(Product product, 
-            int taxCategoryId, Customer customer)
+        /// <param name="price">Price</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the package for tax calculation
+        /// </returns>
+        protected virtual async Task<TaxRateRequest> PrepareTaxRateRequestAsync(Product product, int taxCategoryId, Customer customer, decimal price)
         {
             if (customer == null)
-                throw new ArgumentNullException("customer");
+                throw new ArgumentNullException(nameof(customer));
 
-            var calculateTaxRequest = new CalculateTaxRequest();
-            calculateTaxRequest.Customer = customer;
-            if (taxCategoryId > 0)
+            var store = await _storeContext.GetCurrentStoreAsync();
+            var taxRateRequest = new TaxRateRequest
             {
-                calculateTaxRequest.TaxCategoryId = taxCategoryId;
-            }
-            else
-            {
-                if (product != null)
-                    calculateTaxRequest.TaxCategoryId = product.TaxCategoryId;
-            }
+                Customer = customer,
+                Product = product,
+                Price = price,
+                TaxCategoryId = taxCategoryId > 0 ? taxCategoryId : product?.TaxCategoryId ?? 0,
+                CurrentStoreId = store.Id
+            };
 
             var basedOn = _taxSettings.TaxBasedOn;
+
             //new EU VAT rules starting January 1st 2015
             //find more info at http://ec.europa.eu/taxation_customs/taxation/vat/how_vat_works/telecom/index_en.htm#new_rules
-            //EU VAT enabled?
-            if (_taxSettings.EuVatEnabled)
-            {
+            var overriddenBasedOn =
+                //EU VAT enabled?
+                _taxSettings.EuVatEnabled &&
                 //telecommunications, broadcasting and electronic services?
-                if (product != null && product.IsTelecommunicationsOrBroadcastingOrElectronicServices)
+                product != null && product.IsTelecommunicationsOrBroadcastingOrElectronicServices &&
+                //January 1st 2015 passed? Yes, not required anymore
+                //DateTime.UtcNow > new DateTime(2015, 1, 1, 0, 0, 0, DateTimeKind.Utc) &&
+                //Europe Union consumer?
+                await IsEuConsumerAsync(customer);
+            if (overriddenBasedOn)
+            {
+                //We must charge VAT in the EU country where the customer belongs (not where the business is based)
+                basedOn = TaxBasedOn.BillingAddress;
+            }
+
+            //tax is based on pickup point address
+            if (!overriddenBasedOn && _taxSettings.TaxBasedOnPickupPointAddress && _shippingSettings.AllowPickupInStore)
+            {
+                var pickupPoint = await _genericAttributeService.GetAttributeAsync<PickupPoint>(customer,
+                    NopCustomerDefaults.SelectedPickupPointAttribute, store.Id);
+                if (pickupPoint != null)
                 {
-                    //January 1st 2015 passed?
-                    if (DateTime.UtcNow > new DateTime(2015, 1, 1, 0, 0, 0, DateTimeKind.Utc))
-                    {
-                        //Europe Union consumer?
-                        if (IsEuConsumer(customer))
-                        {
-                            //We must charge VAT in the EU country where the customer belongs (not where the business is based)
-                            basedOn = TaxBasedOn.BillingAddress;
-                        }
-                    }
+                    taxRateRequest.Address = await LoadPickupPointTaxAddressAsync(pickupPoint);
+                    return taxRateRequest;
                 }
             }
-            if (basedOn == TaxBasedOn.BillingAddress && customer.BillingAddress == null)
-                basedOn = TaxBasedOn.DefaultAddress;
-            if (basedOn == TaxBasedOn.ShippingAddress && customer.ShippingAddress == null)
-                basedOn = TaxBasedOn.DefaultAddress;
 
-            Address address;
+            if (basedOn == TaxBasedOn.BillingAddress && customer.BillingAddressId == null ||
+                basedOn == TaxBasedOn.ShippingAddress && customer.ShippingAddressId == null)
+                basedOn = TaxBasedOn.DefaultAddress;
 
             switch (basedOn)
             {
                 case TaxBasedOn.BillingAddress:
-                    {
-                        address = customer.BillingAddress;
-                    }
+                    var billingAddress = await _customerService.GetCustomerBillingAddressAsync(customer);
+                    taxRateRequest.Address = billingAddress;
                     break;
                 case TaxBasedOn.ShippingAddress:
-                    {
-                        address = customer.ShippingAddress;
-                    }
+                    var shippingAddress = await _customerService.GetCustomerShippingAddressAsync(customer);
+                    taxRateRequest.Address = shippingAddress;
                     break;
                 case TaxBasedOn.DefaultAddress:
                 default:
-                    {
-                        address = _addressService.GetAddressById(_taxSettings.DefaultTaxAddressId);
-                    }
+                    taxRateRequest.Address = await LoadDefaultTaxAddressAsync();
                     break;
             }
 
-            calculateTaxRequest.Address = address;
-            return calculateTaxRequest;
+            return taxRateRequest;
         }
 
         /// <summary>
@@ -211,133 +270,220 @@ namespace Nop.Services.Tax
 
             decimal result;
             if (increase)
-            {
                 result = price * (1 + percent / 100);
-            }
             else
-            {
-                result = price - (price) / (100 + percent) * percent;
-            }
+                result = price - price / (100 + percent) * percent;
+
             return result;
         }
-        
+
         /// <summary>
         /// Gets tax rate
         /// </summary>
         /// <param name="product">Product</param>
         /// <param name="taxCategoryId">Tax category identifier</param>
         /// <param name="customer">Customer</param>
-        /// <param name="taxRate">Calculated tax rate</param>
-        /// <param name="isTaxable">A value indicating whether a request is taxable</param>
-        protected virtual void GetTaxRate(Product product, int taxCategoryId, 
-            Customer customer, out decimal taxRate, out bool isTaxable)
+        /// <param name="price">Price (taxable value)</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the calculated tax rate. A value indicating whether a request is taxable
+        /// </returns>
+        protected virtual async Task<(decimal taxRate, bool isTaxable)> GetTaxRateAsync(Product product, int taxCategoryId,
+            Customer customer, decimal price)
         {
-            taxRate = decimal.Zero;
-            isTaxable = true;
+            var taxRate = decimal.Zero;
 
             //active tax provider
-            var activeTaxProvider = LoadActiveTaxProvider();
+            var store = await _storeContext.GetCurrentStoreAsync();
+            var activeTaxProvider = await _taxPluginManager.LoadPrimaryPluginAsync(customer, store.Id);
             if (activeTaxProvider == null)
-                return;
+                return (taxRate, true);
 
             //tax request
-            var calculateTaxRequest = CreateCalculateTaxRequest(product, taxCategoryId, customer);
+            var taxRateRequest = await PrepareTaxRateRequestAsync(product, taxCategoryId, customer, price);
+
+            var isTaxable = !await IsTaxExemptAsync(product, taxRateRequest.Customer);
 
             //tax exempt
-            if (IsTaxExempt(product, calculateTaxRequest.Customer))
-            {
-                isTaxable = false;
-            }
+
             //make EU VAT exempt validation (the European Union Value Added Tax)
-            if (isTaxable && 
+            if (isTaxable &&
                 _taxSettings.EuVatEnabled &&
-                IsVatExempt(calculateTaxRequest.Address, calculateTaxRequest.Customer))
-            {
+                await IsVatExemptAsync(taxRateRequest.Address, taxRateRequest.Customer))
                 //VAT is not chargeable
                 isTaxable = false;
-            }
 
             //get tax rate
-            var calculateTaxResult = activeTaxProvider.GetTaxRate(calculateTaxRequest);
-            if (calculateTaxResult.Success)
+            var taxRateResult = await activeTaxProvider.GetTaxRateAsync(taxRateRequest);
+
+            //tax rate is calculated, now consumers can adjust it
+            await _eventPublisher.PublishAsync(new TaxRateCalculatedEvent(taxRateResult));
+
+            if (taxRateResult.Success)
             {
                 //ensure that tax is equal or greater than zero
-                if (calculateTaxResult.TaxRate < decimal.Zero)
-                    calculateTaxResult.TaxRate = decimal.Zero;
-                
-                taxRate = calculateTaxResult.TaxRate;
+                if (taxRateResult.TaxRate < decimal.Zero)
+                    taxRateResult.TaxRate = decimal.Zero;
+
+                taxRate = taxRateResult.TaxRate;
+            }
+            else if (_taxSettings.LogErrors)
+                foreach (var error in taxRateResult.Errors)
+                    await _logger.ErrorAsync($"{activeTaxProvider.PluginDescriptor.FriendlyName} - {error}", null, customer);
+
+            return (taxRate, isTaxable);
+        }
+
+        /// <summary>
+        /// Gets VAT Number status
+        /// </summary>
+        /// <param name="twoLetterIsoCode">Two letter ISO code of a country</param>
+        /// <param name="vatNumber">VAT number</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the vAT Number status. Name (if received). Address (if received)
+        /// </returns>
+        protected virtual async Task<(VatNumberStatus vatNumberStatus, string name, string address)> GetVatNumberStatusAsync(string twoLetterIsoCode, string vatNumber)
+        {
+            var name = string.Empty;
+            var address = string.Empty;
+
+            if (string.IsNullOrEmpty(twoLetterIsoCode))
+                return (VatNumberStatus.Empty, name, address);
+
+            if (string.IsNullOrEmpty(vatNumber))
+                return (VatNumberStatus.Empty, name, address);
+
+            if (_taxSettings.EuVatAssumeValid)
+                return (VatNumberStatus.Valid, name, address);
+
+            if (!_taxSettings.EuVatUseWebService)
+                return (VatNumberStatus.Unknown, name, address);
+
+            var rez = await DoVatCheckAsync(twoLetterIsoCode, vatNumber);
+
+            return (rez.vatNumberStatus, rez.name, rez.address);
+        }
+
+        /// <summary>
+        /// Performs a basic check of a VAT number for validity
+        /// </summary>
+        /// <param name="twoLetterIsoCode">Two letter ISO code of a country</param>
+        /// <param name="vatNumber">VAT number</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the vAT number status. Company name. Address. Exception
+        /// </returns>
+        protected virtual async Task<(VatNumberStatus vatNumberStatus, string name, string address, Exception exception)> DoVatCheckAsync(string twoLetterIsoCode, string vatNumber)
+        {
+            if (vatNumber == null)
+                vatNumber = string.Empty;
+            vatNumber = vatNumber.Trim().Replace(" ", string.Empty);
+
+            if (twoLetterIsoCode == null)
+                twoLetterIsoCode = string.Empty;
+            if (!string.IsNullOrEmpty(twoLetterIsoCode))
+                //The service returns INVALID_INPUT for country codes that are not uppercase.
+                twoLetterIsoCode = twoLetterIsoCode.ToUpperInvariant();
+
+            string name;
+            string address;
+
+            try
+            {
+                var s = new EuropaCheckVatService.checkVatPortTypeClient();
+                var result = await s.checkVatAsync(new EuropaCheckVatService.checkVatRequest
+                {
+                    vatNumber = vatNumber,
+                    countryCode = twoLetterIsoCode
+                });
+
+                var valid = result.valid;
+                name = result.name;
+                address = result.address;
+
+                return (valid ? VatNumberStatus.Valid : VatNumberStatus.Invalid, name, address, null);
+            }
+            catch (Exception ex)
+            {
+                name = address = string.Empty;
+                var exception = ex;
+
+                return (VatNumberStatus.Unknown, name, address, exception);
             }
         }
-        
+
+        /// <summary>
+        /// Gets a value indicating whether EU VAT exempt (the European Union Value Added Tax)
+        /// </summary>
+        /// <param name="address">Address</param>
+        /// <param name="customer">Customer</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the result
+        /// </returns>
+        protected virtual async Task<bool> IsVatExemptAsync(Address address, Customer customer)
+        {
+            if (!_taxSettings.EuVatEnabled)
+                return false;
+
+            if (customer == null || address == null)
+                return false;
+
+            var country = await _countryService.GetCountryByIdAsync(address.CountryId ?? 0);
+            if (country == null)
+                return false;
+
+            if (!country.SubjectToVat)
+                // VAT not chargeable if shipping outside VAT zone
+                return true;
+
+            // VAT not chargeable if address, customer and config meet our VAT exemption requirements:
+            // returns true if this customer is VAT exempt because they are shipping within the EU but outside our shop country, they have supplied a validated VAT number, and the shop is configured to allow VAT exemption
+            var customerVatStatus = (VatNumberStatus)customer.VatNumberStatusId;
+
+            return country.Id != _taxSettings.EuVatShopCountryId &&
+                   customerVatStatus == VatNumberStatus.Valid &&
+                   _taxSettings.EuVatAllowVatExemption;
+        }
 
         #endregion
 
         #region Methods
 
-        /// <summary>
-        /// Load active tax provider
-        /// </summary>
-        /// <returns>Active tax provider</returns>
-        public virtual ITaxProvider LoadActiveTaxProvider()
-        {
-            var taxProvider = LoadTaxProviderBySystemName(_taxSettings.ActiveTaxProviderSystemName);
-            if (taxProvider == null)
-                taxProvider = LoadAllTaxProviders().FirstOrDefault();
-            return taxProvider;
-        }
-
-        /// <summary>
-        /// Load tax provider by system name
-        /// </summary>
-        /// <param name="systemName">System name</param>
-        /// <returns>Found tax provider</returns>
-        public virtual ITaxProvider LoadTaxProviderBySystemName(string systemName)
-        {
-            var descriptor = _pluginFinder.GetPluginDescriptorBySystemName<ITaxProvider>(systemName);
-            if (descriptor != null)
-                return descriptor.Instance<ITaxProvider>();
-
-            return null;
-        }
-
-        /// <summary>
-        /// Load all tax providers
-        /// </summary>
-        /// <returns>Tax providers</returns>
-        public virtual IList<ITaxProvider> LoadAllTaxProviders()
-        {
-            return _pluginFinder.GetPlugins<ITaxProvider>().ToList();
-        }
-
-
+        #region Product price
 
         /// <summary>
         /// Gets price
         /// </summary>
         /// <param name="product">Product</param>
         /// <param name="price">Price</param>
-        /// <param name="taxRate">Tax rate</param>
-        /// <returns>Price</returns>
-        public virtual decimal GetProductPrice(Product product, decimal price, 
-            out decimal taxRate)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the price. Tax rate
+        /// </returns>
+        public virtual async Task<(decimal price, decimal taxRate)> GetProductPriceAsync(Product product, decimal price)
         {
-            var customer = _workContext.CurrentCustomer;
-            return GetProductPrice(product, price, customer, out taxRate);
+            var customer = await _workContext.GetCurrentCustomerAsync();
+
+            return await GetProductPriceAsync(product, price, customer);
         }
-        
+
         /// <summary>
         /// Gets price
         /// </summary>
         /// <param name="product">Product</param>
         /// <param name="price">Price</param>
         /// <param name="customer">Customer</param>
-        /// <param name="taxRate">Tax rate</param>
-        /// <returns>Price</returns>
-        public virtual decimal GetProductPrice(Product product, decimal price,
-            Customer customer, out decimal taxRate)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the price. Tax rate
+        /// </returns>
+        public virtual async Task<(decimal price, decimal taxRate)> GetProductPriceAsync(Product product, decimal price,
+            Customer customer)
         {
-            bool includingTax = _workContext.TaxDisplayType == TaxDisplayType.IncludingTax;
-            return GetProductPrice(product, price, includingTax, customer, out taxRate);
+            var includingTax = await _workContext.GetTaxDisplayTypeAsync() == TaxDisplayType.IncludingTax;
+            return await GetProductPriceAsync(product, price, includingTax, customer);
         }
 
         /// <summary>
@@ -347,17 +493,18 @@ namespace Nop.Services.Tax
         /// <param name="price">Price</param>
         /// <param name="includingTax">A value indicating whether calculated price should include tax</param>
         /// <param name="customer">Customer</param>
-        /// <param name="taxRate">Tax rate</param>
-        /// <returns>Price</returns>
-        public virtual decimal GetProductPrice(Product product, decimal price,
-            bool includingTax, Customer customer, out decimal taxRate)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the price. Tax rate
+        /// </returns>
+        public virtual async Task<(decimal price, decimal taxRate)> GetProductPriceAsync(Product product, decimal price,
+            bool includingTax, Customer customer)
         {
-            bool priceIncludesTax = _taxSettings.PricesIncludeTax;
-            int taxCategoryId = 0;
-            return GetProductPrice(product, taxCategoryId, price, includingTax, 
-                customer, priceIncludesTax, out taxRate);
+            var priceIncludesTax = _taxSettings.PricesIncludeTax;
+            var taxCategoryId = 0;
+            return await GetProductPriceAsync(product, taxCategoryId, price, includingTax, customer, priceIncludesTax);
         }
-        
+
         /// <summary>
         /// Gets price
         /// </summary>
@@ -367,22 +514,23 @@ namespace Nop.Services.Tax
         /// <param name="includingTax">A value indicating whether calculated price should include tax</param>
         /// <param name="customer">Customer</param>
         /// <param name="priceIncludesTax">A value indicating whether price already includes tax</param>
-        /// <param name="taxRate">Tax rate</param>
-        /// <returns>Price</returns>
-        public virtual decimal GetProductPrice(Product product, int taxCategoryId,
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the price. Tax rate
+        /// </returns>
+        public virtual async Task<(decimal price, decimal taxRate)> GetProductPriceAsync(Product product, int taxCategoryId,
             decimal price, bool includingTax, Customer customer,
-            bool priceIncludesTax, out decimal taxRate)
+            bool priceIncludesTax)
         {
-            //no need to calculate tax rate if passed "price" is 0
-            if (price == decimal.Zero)
-            {
-                taxRate = decimal.Zero;
-                return taxRate;
-            }
+            var taxRate = decimal.Zero;
 
+            //no need to calculate tax rate if passed "price" is 0
+            if (price == decimal.Zero) 
+                return (price, taxRate);
 
             bool isTaxable;
-            GetTaxRate(product, taxCategoryId, customer, out taxRate, out isTaxable);
+
+            (taxRate, isTaxable) = await GetTaxRateAsync(product, taxCategoryId, customer, price);
 
             if (priceIncludesTax)
             {
@@ -417,392 +565,284 @@ namespace Nop.Services.Tax
                 }
             }
 
-
             if (!isTaxable)
             {
                 //we return 0% tax rate in case a request is not taxable
                 taxRate = decimal.Zero;
             }
-            
+
             //allowed to support negative price adjustments
             //if (price < decimal.Zero)
             //    price = decimal.Zero;
 
-            return price;
+            return (price, taxRate);
         }
-
-
-
-
-        /// <summary>
-        /// Gets shipping price
-        /// </summary>
-        /// <param name="price">Price</param>
-        /// <param name="customer">Customer</param>
-        /// <returns>Price</returns>
-        public virtual decimal GetShippingPrice(decimal price, Customer customer)
-        {
-            bool includingTax = _workContext.TaxDisplayType == TaxDisplayType.IncludingTax;
-            return GetShippingPrice(price, includingTax, customer);
-        }
-
-        /// <summary>
-        /// Gets shipping price
-        /// </summary>
-        /// <param name="price">Price</param>
-        /// <param name="includingTax">A value indicating whether calculated price should include tax</param>
-        /// <param name="customer">Customer</param>
-        /// <returns>Price</returns>
-        public virtual decimal GetShippingPrice(decimal price, bool includingTax, Customer customer)
-        {
-            decimal taxRate;
-            return GetShippingPrice(price, includingTax, customer, out taxRate);
-        }
-
-        /// <summary>
-        /// Gets shipping price
-        /// </summary>
-        /// <param name="price">Price</param>
-        /// <param name="includingTax">A value indicating whether calculated price should include tax</param>
-        /// <param name="customer">Customer</param>
-        /// <param name="taxRate">Tax rate</param>
-        /// <returns>Price</returns>
-        public virtual decimal GetShippingPrice(decimal price, bool includingTax, Customer customer, out decimal taxRate)
-        {
-            taxRate = decimal.Zero;
-
-            if (!_taxSettings.ShippingIsTaxable)
-            {
-                return price;
-            }
-            int taxClassId = _taxSettings.ShippingTaxClassId;
-            bool priceIncludesTax = _taxSettings.ShippingPriceIncludesTax;
-            return GetProductPrice(null, taxClassId, price, includingTax, customer,
-                priceIncludesTax, out taxRate);
-        }
-
-
-
-
-
-        /// <summary>
-        /// Gets payment method additional handling fee
-        /// </summary>
-        /// <param name="price">Price</param>
-        /// <param name="customer">Customer</param>
-        /// <returns>Price</returns>
-        public virtual decimal GetPaymentMethodAdditionalFee(decimal price, Customer customer)
-        {
-            bool includingTax = _workContext.TaxDisplayType == TaxDisplayType.IncludingTax;
-            return GetPaymentMethodAdditionalFee(price, includingTax, customer);
-        }
-
-        /// <summary>
-        /// Gets payment method additional handling fee
-        /// </summary>
-        /// <param name="price">Price</param>
-        /// <param name="includingTax">A value indicating whether calculated price should include tax</param>
-        /// <param name="customer">Customer</param>
-        /// <returns>Price</returns>
-        public virtual decimal GetPaymentMethodAdditionalFee(decimal price, bool includingTax, Customer customer)
-        {
-            decimal taxRate;
-            return GetPaymentMethodAdditionalFee(price, includingTax,
-                customer, out taxRate);
-        }
-
-        /// <summary>
-        /// Gets payment method additional handling fee
-        /// </summary>
-        /// <param name="price">Price</param>
-        /// <param name="includingTax">A value indicating whether calculated price should include tax</param>
-        /// <param name="customer">Customer</param>
-        /// <param name="taxRate">Tax rate</param>
-        /// <returns>Price</returns>
-        public virtual decimal GetPaymentMethodAdditionalFee(decimal price, bool includingTax, Customer customer, out decimal taxRate)
-        {
-            taxRate = decimal.Zero;
-
-            if (!_taxSettings.PaymentMethodAdditionalFeeIsTaxable)
-            {
-                return price;
-            }
-            int taxClassId = _taxSettings.PaymentMethodAdditionalFeeTaxClassId;
-            bool priceIncludesTax = _taxSettings.PaymentMethodAdditionalFeeIncludesTax;
-            return GetProductPrice(null, taxClassId, price, includingTax, customer,
-                priceIncludesTax, out taxRate);
-        }
-
-
-
-
-
-        /// <summary>
-        /// Gets checkout attribute value price
-        /// </summary>
-        /// <param name="cav">Checkout attribute value</param>
-        /// <returns>Price</returns>
-        public virtual decimal GetCheckoutAttributePrice(CheckoutAttributeValue cav)
-        {
-            var customer = _workContext.CurrentCustomer;
-            return GetCheckoutAttributePrice(cav, customer);
-        }
-
-        /// <summary>
-        /// Gets checkout attribute value price
-        /// </summary>
-        /// <param name="cav">Checkout attribute value</param>
-        /// <param name="customer">Customer</param>
-        /// <returns>Price</returns>
-        public virtual decimal GetCheckoutAttributePrice(CheckoutAttributeValue cav, Customer customer)
-        {
-            bool includingTax = _workContext.TaxDisplayType == TaxDisplayType.IncludingTax;
-            return GetCheckoutAttributePrice(cav, includingTax, customer);
-        }
-
-        /// <summary>
-        /// Gets checkout attribute value price
-        /// </summary>
-        /// <param name="cav">Checkout attribute value</param>
-        /// <param name="includingTax">A value indicating whether calculated price should include tax</param>
-        /// <param name="customer">Customer</param>
-        /// <returns>Price</returns>
-        public virtual decimal GetCheckoutAttributePrice(CheckoutAttributeValue cav,
-            bool includingTax, Customer customer)
-        {
-            decimal taxRate;
-            return GetCheckoutAttributePrice(cav, includingTax, customer, out taxRate);
-        }
-
-        /// <summary>
-        /// Gets checkout attribute value price
-        /// </summary>
-        /// <param name="cav">Checkout attribute value</param>
-        /// <param name="includingTax">A value indicating whether calculated price should include tax</param>
-        /// <param name="customer">Customer</param>
-        /// <param name="taxRate">Tax rate</param>
-        /// <returns>Price</returns>
-        public virtual decimal GetCheckoutAttributePrice(CheckoutAttributeValue cav,
-            bool includingTax, Customer customer, out decimal taxRate)
-        {
-            if (cav == null)
-                throw new ArgumentNullException("cav");
-
-            taxRate = decimal.Zero;
-
-            decimal price = cav.PriceAdjustment;
-            if (cav.CheckoutAttribute.IsTaxExempt)
-            {
-                return price;
-            }
-
-            bool priceIncludesTax = _taxSettings.PricesIncludeTax;
-            int taxClassId = cav.CheckoutAttribute.TaxCategoryId;
-            return GetProductPrice(null, taxClassId, price, includingTax, customer,
-                priceIncludesTax, out taxRate);
-        }
-
-
-
-
-
-        /// <summary>
-        /// Gets VAT Number status
-        /// </summary>
-        /// <param name="fullVatNumber">Two letter ISO code of a country and VAT number (e.g. GB 111 1111 111)</param>
-        /// <returns>VAT Number status</returns>
-        public virtual VatNumberStatus GetVatNumberStatus(string fullVatNumber)
-        {
-            string name, address;
-            return GetVatNumberStatus(fullVatNumber, out name, out address);
-        }
-
-        /// <summary>
-        /// Gets VAT Number status
-        /// </summary>
-        /// <param name="fullVatNumber">Two letter ISO code of a country and VAT number (e.g. GB 111 1111 111)</param>
-        /// <param name="name">Name (if received)</param>
-        /// <param name="address">Address (if received)</param>
-        /// <returns>VAT Number status</returns>
-        public virtual VatNumberStatus GetVatNumberStatus(string fullVatNumber,
-            out string name, out string address)
-        {
-            name = string.Empty;
-            address = string.Empty;
-
-            if (String.IsNullOrWhiteSpace(fullVatNumber))
-                return VatNumberStatus.Empty;
-            fullVatNumber = fullVatNumber.Trim();
-            
-            //GB 111 1111 111 or GB 1111111111
-            //more advanced regex - http://codeigniter.com/wiki/European_Vat_Checker
-            var r = new Regex(@"^(\w{2})(.*)");
-            var match = r.Match(fullVatNumber);
-            if (!match.Success)
-                return VatNumberStatus.Invalid;
-            var twoLetterIsoCode = match.Groups[1].Value;
-            var vatNumber = match.Groups[2].Value;
-
-            return GetVatNumberStatus(twoLetterIsoCode, vatNumber, out name, out address);
-        }
-        
-        /// <summary>
-        /// Gets VAT Number status
-        /// </summary>
-        /// <param name="twoLetterIsoCode">Two letter ISO code of a country</param>
-        /// <param name="vatNumber">VAT number</param>
-        /// <returns>VAT Number status</returns>
-        public virtual VatNumberStatus GetVatNumberStatus(string twoLetterIsoCode, string vatNumber)
-        {
-            string name, address;
-            return GetVatNumberStatus(twoLetterIsoCode, vatNumber, out name, out address);
-        }
-        
-        /// <summary>
-        /// Gets VAT Number status
-        /// </summary>
-        /// <param name="twoLetterIsoCode">Two letter ISO code of a country</param>
-        /// <param name="vatNumber">VAT number</param>
-        /// <param name="name">Name (if received)</param>
-        /// <param name="address">Address (if received)</param>
-        /// <returns>VAT Number status</returns>
-        public virtual VatNumberStatus GetVatNumberStatus(string twoLetterIsoCode, string vatNumber,
-            out string name, out string address)
-        {
-            name = string.Empty;
-            address = string.Empty;
-
-            if (String.IsNullOrEmpty(twoLetterIsoCode))
-                return VatNumberStatus.Empty;
-
-            if (String.IsNullOrEmpty(vatNumber))
-                return VatNumberStatus.Empty;
-
-            if (_taxSettings.EuVatAssumeValid)
-                return VatNumberStatus.Valid;
-
-            if (!_taxSettings.EuVatUseWebService)
-                return VatNumberStatus.Unknown;
-
-            Exception exception;
-            return DoVatCheck(twoLetterIsoCode, vatNumber, out name, out address, out exception);
-        }
-
-        /// <summary>
-        /// Performs a basic check of a VAT number for validity
-        /// </summary>
-        /// <param name="twoLetterIsoCode">Two letter ISO code of a country</param>
-        /// <param name="vatNumber">VAT number</param>
-        /// <param name="name">Company name</param>
-        /// <param name="address">Address</param>
-        /// <param name="exception">Exception</param>
-        /// <returns>VAT number status</returns>
-        public virtual VatNumberStatus DoVatCheck(string twoLetterIsoCode, string vatNumber,
-            out string name, out string address, out Exception exception)
-        {
-            name = string.Empty;
-            address = string.Empty;
-
-            if (vatNumber == null)
-                vatNumber = string.Empty;
-            vatNumber = vatNumber.Trim().Replace(" ", "");
-
-            if (twoLetterIsoCode == null)
-                twoLetterIsoCode = string.Empty;
-            if (!String.IsNullOrEmpty(twoLetterIsoCode))
-                //The service returns INVALID_INPUT for country codes that are not uppercase.
-                twoLetterIsoCode = twoLetterIsoCode.ToUpper();
-
-            EuropaCheckVatService.checkVatService s = null;
-
-            try
-            {
-                bool valid;
-
-                s = new EuropaCheckVatService.checkVatService();
-                s.checkVat(ref twoLetterIsoCode, ref vatNumber, out valid, out name, out address);
-                exception = null;
-                return valid ? VatNumberStatus.Valid : VatNumberStatus.Invalid;
-            }
-            catch (Exception ex)
-            {
-                name = address = string.Empty;
-                exception = ex;
-                return VatNumberStatus.Unknown;
-            }
-            finally
-            {
-                if (name == null)
-                    name = string.Empty;
-
-                if (address == null)
-                    address = string.Empty;
-
-                if (s != null)
-                    s.Dispose();
-            }
-        }
-       
-
-
-
 
         /// <summary>
         /// Gets a value indicating whether a product is tax exempt
         /// </summary>
         /// <param name="product">Product</param>
         /// <param name="customer">Customer</param>
-        /// <returns>A value indicating whether a product is tax exempt</returns>
-        public virtual bool IsTaxExempt(Product product, Customer customer)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains a value indicating whether a product is tax exempt
+        /// </returns>
+        public virtual async Task<bool> IsTaxExemptAsync(Product product, Customer customer)
         {
             if (customer != null)
             {
                 if (customer.IsTaxExempt)
                     return true;
 
-                if (customer.CustomerRoles.Where(cr => cr.Active).Any(cr => cr.TaxExempt))
+                if ((await _customerService.GetCustomerRolesAsync(customer)).Any(cr => cr.TaxExempt))
                     return true;
             }
 
             if (product == null)
-            {
                 return false;
-            }
 
             if (product.IsTaxExempt)
-            {
                 return true;
-            }
 
             return false;
         }
 
+        #endregion
+
+        #region Shipping price
+
         /// <summary>
-        /// Gets a value indicating whether EU VAT exempt (the European Union Value Added Tax)
+        /// Gets shipping price
         /// </summary>
-        /// <param name="address">Address</param>
+        /// <param name="price">Price</param>
         /// <param name="customer">Customer</param>
-        /// <returns>Result</returns>
-        public virtual bool IsVatExempt(Address address, Customer customer)
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the price. Tax rate
+        /// </returns>
+        public virtual async Task<(decimal price, decimal taxRate)> GetShippingPriceAsync(decimal price, Customer customer)
         {
-            if (!_taxSettings.EuVatEnabled)
-                return false;
+            var includingTax = await _workContext.GetTaxDisplayTypeAsync() == TaxDisplayType.IncludingTax;
 
-            if (address == null || address.Country == null || customer == null)
-                return false;
-
-
-            if (!address.Country.SubjectToVat)
-                // VAT not chargeable if shipping outside VAT zone
-                return true;
-
-            // VAT not chargeable if address, customer and config meet our VAT exemption requirements:
-            // returns true if this customer is VAT exempt because they are shipping within the EU but outside our shop country, they have supplied a validated VAT number, and the shop is configured to allow VAT exemption
-            var customerVatStatus = (VatNumberStatus) customer.GetAttribute<int>(SystemCustomerAttributeNames.VatNumberStatusId);
-            return address.CountryId != _taxSettings.EuVatShopCountryId &&
-                   customerVatStatus == VatNumberStatus.Valid &&
-                   _taxSettings.EuVatAllowVatExemption;
+            return await GetShippingPriceAsync(price, includingTax, customer);
         }
+
+        /// <summary>
+        /// Gets shipping price
+        /// </summary>
+        /// <param name="price">Price</param>
+        /// <param name="includingTax">A value indicating whether calculated price should include tax</param>
+        /// <param name="customer">Customer</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the price. Tax rate
+        /// </returns>
+        public virtual async Task<(decimal price, decimal taxRate)> GetShippingPriceAsync(decimal price, bool includingTax, Customer customer)
+        {
+            var taxRate = decimal.Zero;
+
+            if (!_taxSettings.ShippingIsTaxable)
+            {
+                return (price, taxRate);
+            }
+
+            var taxClassId = _taxSettings.ShippingTaxClassId;
+            var priceIncludesTax = _taxSettings.ShippingPriceIncludesTax;
+
+            return await GetProductPriceAsync(null, taxClassId, price, includingTax, customer, priceIncludesTax);
+        }
+
+        #endregion
+
+        #region Payment additional fee
+
+        /// <summary>
+        /// Gets payment method additional handling fee
+        /// </summary>
+        /// <param name="price">Price</param>
+        /// <param name="customer">Customer</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the price. Tax rate
+        /// </returns>
+        public virtual async Task<(decimal price, decimal taxRate)> GetPaymentMethodAdditionalFeeAsync(decimal price, Customer customer)
+        {
+            var includingTax = await _workContext.GetTaxDisplayTypeAsync() == TaxDisplayType.IncludingTax;
+            
+            return await GetPaymentMethodAdditionalFeeAsync(price, includingTax, customer);
+        }
+
+        /// <summary>
+        /// Gets payment method additional handling fee
+        /// </summary>
+        /// <param name="price">Price</param>
+        /// <param name="includingTax">A value indicating whether calculated price should include tax</param>
+        /// <param name="customer">Customer</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the price. Tax rate
+        /// </returns>
+        public virtual async Task<(decimal price, decimal taxRate)> GetPaymentMethodAdditionalFeeAsync(decimal price, bool includingTax, Customer customer)
+        {
+            var taxRate = decimal.Zero;
+
+            if (!_taxSettings.PaymentMethodAdditionalFeeIsTaxable)
+            {
+                return (price, taxRate);
+            }
+
+            var taxClassId = _taxSettings.PaymentMethodAdditionalFeeTaxClassId;
+            var priceIncludesTax = _taxSettings.PaymentMethodAdditionalFeeIncludesTax;
+            return await GetProductPriceAsync(null, taxClassId, price, includingTax, customer, priceIncludesTax);
+        }
+
+        #endregion
+
+        #region Checkout attribute price
+
+        /// <summary>
+        /// Gets checkout attribute value price
+        /// </summary>
+        /// <param name="ca">Checkout attribute</param>
+        /// <param name="cav">Checkout attribute value</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the price. Tax rate
+        /// </returns>
+        public virtual async Task<(decimal price, decimal taxRate)> GetCheckoutAttributePriceAsync(CheckoutAttribute ca, CheckoutAttributeValue cav)
+        {
+            var customer = await _workContext.GetCurrentCustomerAsync();
+
+            return await GetCheckoutAttributePriceAsync(ca, cav, customer);
+        }
+
+        /// <summary>
+        /// Gets checkout attribute value price
+        /// </summary>
+        /// <param name="ca">Checkout attribute</param>
+        /// <param name="cav">Checkout attribute value</param>
+        /// <param name="customer">Customer</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the price. Tax rate
+        /// </returns>
+        public virtual async Task<(decimal price, decimal taxRate)> GetCheckoutAttributePriceAsync(CheckoutAttribute ca, CheckoutAttributeValue cav, Customer customer)
+        {
+            var includingTax = await _workContext.GetTaxDisplayTypeAsync() == TaxDisplayType.IncludingTax;
+
+            return await GetCheckoutAttributePriceAsync(ca, cav, includingTax, customer);
+        }
+
+        /// <summary>
+        /// Gets checkout attribute value price
+        /// </summary>
+        /// <param name="ca">Checkout attribute</param>
+        /// <param name="cav">Checkout attribute value</param>
+        /// <param name="includingTax">A value indicating whether calculated price should include tax</param>
+        /// <param name="customer">Customer</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the price. Tax rate
+        /// </returns>
+        public virtual async Task<(decimal price, decimal taxRate)> GetCheckoutAttributePriceAsync(CheckoutAttribute ca, CheckoutAttributeValue cav,
+            bool includingTax, Customer customer)
+        {
+            if (cav == null)
+                throw new ArgumentNullException(nameof(cav));
+
+            var taxRate = decimal.Zero;
+
+            var price = cav.PriceAdjustment;
+            if (ca.IsTaxExempt) 
+                return (price, taxRate);
+
+            var priceIncludesTax = _taxSettings.PricesIncludeTax;
+            var taxClassId = ca.TaxCategoryId;
+
+            return await GetProductPriceAsync(null, taxClassId, price, includingTax, customer, priceIncludesTax);
+        }
+
+        #endregion
+
+        #region VAT
+        
+        /// <summary>
+        /// Gets VAT Number status
+        /// </summary>
+        /// <param name="fullVatNumber">Two letter ISO code of a country and VAT number (e.g. GB 111 1111 111)</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the vAT Number status. Name (if received). Address (if received)
+        /// </returns>
+        public virtual async Task<(VatNumberStatus vatNumberStatus, string name, string address)> GetVatNumberStatusAsync(string fullVatNumber)
+        {
+            var name = string.Empty;
+            var address = string.Empty;
+
+            if (string.IsNullOrWhiteSpace(fullVatNumber))
+                return (VatNumberStatus.Empty, name, address);
+            fullVatNumber = fullVatNumber.Trim();
+
+            //GB 111 1111 111 or GB 1111111111
+            //more advanced regex - http://codeigniter.com/wiki/European_Vat_Checker
+            var r = new Regex(@"^(\w{2})(.*)");
+            var match = r.Match(fullVatNumber);
+            if (!match.Success)
+                return (VatNumberStatus.Invalid, name, address); 
+
+            var twoLetterIsoCode = match.Groups[1].Value;
+            var vatNumber = match.Groups[2].Value;
+
+            return await GetVatNumberStatusAsync(twoLetterIsoCode, vatNumber);
+        }
+
+        #endregion
+
+        #region Tax total
+
+        /// <summary>
+        /// Get tax total for the passed shopping cart
+        /// </summary>
+        /// <param name="cart">Shopping cart</param>
+        /// <param name="usePaymentMethodAdditionalFee">A value indicating whether we should use payment method additional fee when calculating tax</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the result
+        /// </returns>
+        public virtual async Task<TaxTotalResult> GetTaxTotalAsync(IList<ShoppingCartItem> cart, bool usePaymentMethodAdditionalFee = true)
+        {
+            var customer = await _customerService.GetShoppingCartCustomerAsync(cart);
+            var store = await _storeContext.GetCurrentStoreAsync();
+            var activeTaxProvider = await _taxPluginManager.LoadPrimaryPluginAsync(customer, store.Id);
+            if (activeTaxProvider == null)
+                return null;
+
+            //get result by using primary tax provider
+            var taxTotalRequest = new TaxTotalRequest
+            {
+                ShoppingCart = cart,
+                Customer = customer,
+                StoreId = store.Id,
+                UsePaymentMethodAdditionalFee = usePaymentMethodAdditionalFee
+            };
+            var taxTotalResult = await activeTaxProvider.GetTaxTotalAsync(taxTotalRequest);
+
+            //tax total is calculated, now consumers can adjust it
+            await _eventPublisher.PublishAsync(new TaxTotalCalculatedEvent(taxTotalRequest, taxTotalResult));
+
+            //error logging
+            if (taxTotalResult != null && !taxTotalResult.Success && _taxSettings.LogErrors)
+            {
+                foreach (var error in taxTotalResult.Errors)
+                {
+                    await _logger.ErrorAsync($"{activeTaxProvider.PluginDescriptor.FriendlyName} - {error}", null, customer);
+                }
+            }
+
+            return taxTotalResult;
+        }
+
+        #endregion
 
         #endregion
     }

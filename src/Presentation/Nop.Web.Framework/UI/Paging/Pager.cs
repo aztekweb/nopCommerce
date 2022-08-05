@@ -1,295 +1,572 @@
-//Contributor : MVCContrib
+﻿//Contributor : MVCContrib
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
-using System.Web;
-using System.Web.Mvc;
-using System.Web.Routing;
+using System.Text.Encodings.Web;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Html;
+using Microsoft.AspNetCore.Mvc.Rendering;
+using Microsoft.AspNetCore.Routing;
 using Nop.Core;
 using Nop.Core.Infrastructure;
 using Nop.Services.Localization;
+using Nop.Web.Framework.Extensions;
 
 namespace Nop.Web.Framework.UI.Paging
 {
-	/// <summary>
+    /// <summary>
     /// Renders a pager component from an IPageableModel datasource.
-	/// </summary>
-	public partial class Pager : IHtmlString
-	{
-        protected readonly IPageableModel model;
-        protected readonly ViewContext viewContext;
-        protected string pageQueryName = "page";
-        protected bool showTotalSummary;
-        protected bool showPagerItems = true;
-        protected bool showFirst = true;
-        protected bool showPrevious = true;
-        protected bool showNext = true;
-        protected bool showLast = true;
-        protected bool showIndividualPages = true;
-        protected bool renderEmptyParameters = true;
-        protected int individualPagesDisplayedCount = 5;
-        protected Func<int, string> urlBuilder;
-        protected IList<string> booleanParameterNames;
+    /// </summary>
+    public partial class Pager : IHtmlContent
+    {
+        #region Properties
 
-		public Pager(IPageableModel model, ViewContext context)
-		{
-            this.model = model;
-            this.viewContext = context;
-            this.urlBuilder = CreateDefaultUrl;
-            this.booleanParameterNames = new List<string>();
-		}
+        /// <summary>
+        /// ViewContext
+        /// </summary>
+        public ViewContext ViewContext { get; set; }
 
-		protected ViewContext ViewContext 
-		{
-			get { return viewContext; }
-		}
-        
+        #endregion
+
+        #region Fields
+
+        /// <summary>
+        /// Page query string prameter name
+        /// </summary>
+        private string _queryParam = "page";
+
+        /// <summary>
+        /// A value indicating whether to show Total summary
+        /// </summary>
+        private bool _showTotalSummary = false;
+
+        /// <summary>
+        /// A value indicating whether to show pager items
+        /// </summary>
+        private bool _showPagerItems = true;
+
+        /// <summary>
+        /// A value indicating whether to show the first item
+        /// </summary>
+        private bool _showFirst = true;
+
+        /// <summary>
+        /// A value indicating whether to the previous item
+        /// </summary>
+        private bool _showPrevious = true;
+
+        /// <summary>
+        /// A value indicating whether to show the next item
+        /// </summary>
+        private bool _showNext = true;
+
+        /// <summary>
+        /// A value indicating whether to show the last item
+        /// </summary>
+        private bool _showLast = true;
+
+        /// <summary>
+        /// A value indicating whether to show individual page
+        /// </summary>
+        private bool _showIndividualPages = true;
+
+        /// <summary>
+        /// A value indicating whether to render empty query string parameters (without values)
+        /// </summary>
+        private bool _renderEmptyParameters = true;
+
+        /// <summary>
+        /// Number of individual page items to display
+        /// </summary>
+        private int _individualPagesDisplayedCount = 5;
+
+        /// <summary>
+        /// Boolean parameter names
+        /// </summary>
+        private IList<string> _booleanParameterNames = new List<string>();
+
+        /// <summary>
+        /// First page css class name
+        /// </summary>
+        private string _firstPageCssClass = "first-page";
+
+        /// <summary>
+        /// Previous page css class name
+        /// </summary>
+        private string _previousPageCssClass = "previous-page";
+
+        /// <summary>
+		/// Current page css class name
+		/// </summary>
+        private string _currentPageCssClass = "current-page";
+
+        /// <summary>
+        /// Individual page css class name
+        /// </summary>
+        private string _individualPageCssClass = "individual-page";
+
+        /// <summary>
+		/// Next page css class name
+		/// </summary>
+        private string _nextPageCssClass = "next-page";
+
+        /// <summary>
+		/// Last page css class name
+		/// </summary>
+        private string _lastPageCssClass = "last-page";
+
+        /// <summary>
+		/// Main ul css class name
+		/// </summary>
+        private string _mainUlCssClass = string.Empty;
+
+        private readonly IPageableModel _model;
+
+        #endregion
+
+        #region Ctor
+
+        public Pager(IPageableModel model, ViewContext context)
+        {
+            _model = model;
+            ViewContext = context;
+        }
+
+        #endregion
+
+        #region Methods
+
+        #region Fields setters
+
+        /// <summary>
+        /// Set 
+        /// </summary>
+        /// <param name="value">Value</param>
+        /// <returns>Pager</returns>
         public Pager QueryParam(string value)
-		{
-            this.pageQueryName = value;
-			return this;
-		}
+        {
+            _queryParam = value;
+            return this;
+        }
+
+        /// <summary>
+        /// Set a value indicating whether to show Total summary
+        /// </summary>
+        /// <param name="value">Value</param>
+        /// <returns>Pager</returns>
         public Pager ShowTotalSummary(bool value)
         {
-            this.showTotalSummary = value;
-            return this;
-        }
-        public Pager ShowPagerItems(bool value)
-        {
-            this.showPagerItems = value;
-            return this;
-        }
-        public Pager ShowFirst(bool value)
-        {
-            this.showFirst = value;
-            return this;
-        }
-        public Pager ShowPrevious(bool value)
-        {
-            this.showPrevious = value;
-            return this;
-        }
-        public Pager ShowNext(bool value)
-        {
-            this.showNext = value;
-            return this;
-        }
-        public Pager ShowLast(bool value)
-        {
-            this.showLast = value;
-            return this;
-        }
-        public Pager ShowIndividualPages(bool value)
-        {
-            this.showIndividualPages = value;
-            return this;
-        }
-        public Pager RenderEmptyParameters(bool value)
-        {
-            this.renderEmptyParameters = value;
-            return this;
-        }
-        public Pager IndividualPagesDisplayedCount(int value)
-        {
-            this.individualPagesDisplayedCount = value;
-            return this;
-        }
-		public Pager Link(Func<int, string> value)
-		{
-            this.urlBuilder = value;
-			return this;
-		}
-        //little hack here due to ugly MVC implementation
-        //find more info here: http://www.mindstorminteractive.com/topics/jquery-fix-asp-net-mvc-checkbox-truefalse-value/
-        public Pager BooleanParameterName(string paramName)
-        {
-            booleanParameterNames.Add(paramName);
+            _showTotalSummary = value;
             return this;
         }
 
-        public override string ToString()
+        /// <summary>
+        /// Set a value indicating whether to show pager items
+        /// </summary>
+        /// <param name="value">Value</param>
+        /// <returns>Pager</returns>
+        public Pager ShowPagerItems(bool value)
         {
-            return ToHtmlString();
+            _showPagerItems = value;
+            return this;
         }
-		public virtual string ToHtmlString()
-		{
-            if (model.TotalItems == 0) 
-				return null;
+
+        /// <summary>
+        /// Set a value indicating whether to show the first item
+        /// </summary>
+        /// <param name="value">Value</param>
+        /// <returns>Pager</returns>
+        public Pager ShowFirst(bool value)
+        {
+            _showFirst = value;
+            return this;
+        }
+
+        /// <summary>
+        /// Set a value indicating whether to the previous item
+        /// </summary>
+        /// <param name="value">Value</param>
+        /// <returns>Pager</returns>
+        public Pager ShowPrevious(bool value)
+        {
+            _showPrevious = value;
+            return this;
+        }
+
+        /// <summary>
+        /// Set a  value indicating whether to show the next item
+        /// </summary>
+        /// <param name="value">Value</param>
+        /// <returns>Pager</returns>
+        public Pager ShowNext(bool value)
+        {
+            _showNext = value;
+            return this;
+        }
+
+        /// <summary>
+        /// Set a value indicating whether to show the last item
+        /// </summary>
+        /// <param name="value">Value</param>
+        /// <returns>Pager</returns>
+        public Pager ShowLast(bool value)
+        {
+            _showLast = value;
+            return this;
+        }
+
+        /// <summary>
+        /// Set number of individual page items to display
+        /// </summary>
+        /// <param name="value">Value</param>
+        /// <returns>Pager</returns>
+        public Pager ShowIndividualPages(bool value)
+        {
+            _showIndividualPages = value;
+            return this;
+        }
+
+        /// <summary>
+        /// Set a value indicating whether to render empty query string parameters (without values)
+        /// </summary>
+        /// <param name="value">Value</param>
+        /// <returns>Pager</returns>
+        public Pager RenderEmptyParameters(bool value)
+        {
+            _renderEmptyParameters = value;
+            return this;
+        }
+
+        /// <summary>
+        /// Set number of individual page items to display
+        /// </summary>
+        /// <param name="value">Value</param>
+        /// <returns>Pager</returns>
+        public Pager IndividualPagesDisplayedCount(int value)
+        {
+            _individualPagesDisplayedCount = value;
+            return this;
+        }
+
+        /// <summary>
+        /// little hack here due to ugly MVC implementation
+        /// find more info here: http://www.mindstorminteractive.com/topics/jquery-fix-asp-net-mvc-checkbox-truefalse-value/
+        /// </summary>
+        /// <param name="paramName">Parameter name</param>
+        /// <returns>Pager</returns>
+        public Pager BooleanParameterName(string paramName)
+        {
+            _booleanParameterNames.Add(paramName);
+            return this;
+        }
+
+        /// <summary>
+        /// Set first page pager css class name
+        /// </summary>
+        /// <param name="value">Value</param>
+        /// <returns>Pager</returns>
+        public Pager FirstPageCssClass(string value)
+        {
+            _firstPageCssClass = value;
+            return this;
+        }
+
+        /// <summary>
+        /// Set previous page pager css class name
+        /// </summary>
+        /// <param name="value">Value</param>
+        /// <returns>Pager</returns>
+        public Pager PreviousPageCssClass(string value)
+        {
+            _previousPageCssClass = value;
+            return this;
+        }
+
+        /// <summary>
+        /// Set current page pager css class name
+        /// </summary>
+        /// <param name="value">Value</param>
+        /// <returns>Pager</returns>
+        public Pager CurrentPageCssClass(string value)
+        {
+            _currentPageCssClass = value;
+            return this;
+        }
+
+        /// <summary>
+        /// Set individual page pager css class name
+        /// </summary>
+        /// <param name="value">Value</param>
+        /// <returns>Pager</returns>
+        public Pager IndividualPageCssClass(string value)
+        {
+            _individualPageCssClass = value;
+            return this;
+        }
+
+        /// <summary>
+        /// Set next page pager css class name
+        /// </summary>
+        /// <param name="value">Value</param>
+        /// <returns>Pager</returns>
+        public Pager NextPageCssClass(string value)
+        {
+            _nextPageCssClass = value;
+            return this;
+        }
+
+        /// <summary>
+        /// Set last page pager css class name
+        /// </summary>
+        /// <param name="value">Value</param>
+        /// <returns>Pager</returns>
+        public Pager LastPageCssClass(string value)
+        {
+            _lastPageCssClass = value;
+            return this;
+        }
+
+        /// <summary>
+        /// Set main ul css class name
+        /// </summary>
+        /// <param name="value">Value</param>
+        /// <returns>Pager</returns>
+        public Pager MainUlCssClass(string value)
+        {
+            _mainUlCssClass = value;
+            return this;
+        }
+
+        #endregion
+
+        /// <summary>
+        /// Write control
+        /// </summary>
+        /// <param name="writer">Writer</param>
+        /// <param name="encoder">Encoder</param>
+        public void WriteTo(TextWriter writer, HtmlEncoder encoder)
+        {
+            writer.Write(ToString());
+        }
+
+        /// <summary>
+        /// Generate HTML control
+        /// </summary>
+        /// <returns>HTML control</returns>
+	    public override string ToString()
+        {
+            return GenerateHtmlStringAsync().Result;
+        }
+
+        /// <summary>
+        /// Is pager empty (only one page)?
+        /// </summary>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the result
+        /// </returns>
+	    public virtual async Task<bool> IsEmpty()
+        {
+            return string.IsNullOrEmpty(await GenerateHtmlStringAsync());
+        }
+
+        #endregion
+
+        #region Utilities
+
+        /// <summary>
+        /// Generate HTML control
+        /// </summary>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the hTML control
+        /// </returns>
+        protected virtual async Task<string> GenerateHtmlStringAsync()
+        {
+            if (_model.TotalItems == 0)
+                return null;
+
             var localizationService = EngineContext.Current.Resolve<ILocalizationService>();
 
             var links = new StringBuilder();
-            if (showTotalSummary && (model.TotalPages > 0))
+            if (_showTotalSummary && (_model.TotalPages > 0))
             {
                 links.Append("<li class=\"total-summary\">");
-                links.Append(string.Format(localizationService.GetResource("Pager.CurrentPage"), model.PageIndex + 1, model.TotalPages, model.TotalItems));
+
+                links.Append(string.Format(await localizationService.GetResourceAsync("Pager.CurrentPage"),
+                    _model.PageIndex + 1, _model.TotalPages, _model.TotalItems));
+
                 links.Append("</li>");
             }
-            if (showPagerItems && (model.TotalPages > 1))
+
+            if (_showPagerItems && (_model.TotalPages > 1))
             {
-                if (showFirst)
+                if (_showFirst)
                 {
                     //first page
-                    if ((model.PageIndex >= 3) && (model.TotalPages > individualPagesDisplayedCount))
-                    {
-                        links.Append(CreatePageLink(1, localizationService.GetResource("Pager.First"), "first-page"));
-                    }
+                    if ((_model.PageIndex >= 3) && (_model.TotalPages > _individualPagesDisplayedCount))
+                        links.Append(await CreatePageLinkAsync(1, await localizationService.GetResourceAsync("Pager.First"), _firstPageCssClass));
                 }
-                if (showPrevious)
+
+                if (_showPrevious)
                 {
                     //previous page
-                    if (model.PageIndex > 0)
-                    {
-                        links.Append(CreatePageLink(model.PageIndex, localizationService.GetResource("Pager.Previous"), "previous-page"));
-                    }
+                    if (_model.PageIndex > 0)
+                        links.Append(await CreatePageLinkAsync(_model.PageIndex, await localizationService.GetResourceAsync("Pager.Previous"), _previousPageCssClass));
                 }
-                if (showIndividualPages)
+
+                if (_showIndividualPages)
                 {
                     //individual pages
-                    int firstIndividualPageIndex = GetFirstIndividualPageIndex();
-                    int lastIndividualPageIndex = GetLastIndividualPageIndex();
-                    for (int i = firstIndividualPageIndex; i <= lastIndividualPageIndex; i++)
+                    var firstIndividualPageIndex = GetFirstIndividualPageIndex();
+                    var lastIndividualPageIndex = GetLastIndividualPageIndex();
+                    for (var i = firstIndividualPageIndex; i <= lastIndividualPageIndex; i++)
                     {
-                        if (model.PageIndex == i)
-                        {
-                            links.AppendFormat("<li class=\"current-page\"><span>{0}</span></li>", (i + 1));
-                        }
+                        if (_model.PageIndex == i)
+                            links.AppendFormat("<li class=\"" + _currentPageCssClass + "\"><span>{0}</span></li>", (i + 1));
                         else
-                        {
-                            links.Append(CreatePageLink(i + 1, (i + 1).ToString(), "individual-page"));
-                        }
+                            links.Append(await CreatePageLinkAsync(i + 1, (i + 1).ToString(), _individualPageCssClass));
                     }
                 }
-                if (showNext)
+
+                if (_showNext)
                 {
                     //next page
-                    if ((model.PageIndex + 1) < model.TotalPages)
-                    {
-                        links.Append(CreatePageLink(model.PageIndex + 2, localizationService.GetResource("Pager.Next"), "next-page"));
-                    }
+                    if ((_model.PageIndex + 1) < _model.TotalPages)
+                        links.Append(await CreatePageLinkAsync(_model.PageIndex + 2, await localizationService.GetResourceAsync("Pager.Next"), _nextPageCssClass));
                 }
-                if (showLast)
+
+                if (_showLast)
                 {
                     //last page
-                    if (((model.PageIndex + 3) < model.TotalPages) && (model.TotalPages > individualPagesDisplayedCount))
-                    {
-                        links.Append(CreatePageLink(model.TotalPages, localizationService.GetResource("Pager.Last"), "last-page"));
-                    }
+                    if (((_model.PageIndex + 3) < _model.TotalPages) && (_model.TotalPages > _individualPagesDisplayedCount))
+                        links.Append(await CreatePageLinkAsync(_model.TotalPages, await localizationService.GetResourceAsync("Pager.Last"), _lastPageCssClass));
                 }
             }
 
             var result = links.ToString();
-            if (!String.IsNullOrEmpty(result))
-            {
-                result = "<ul>" + result + "</ul>";
-            }
-            return result;
-		}
-	    public virtual bool IsEmpty()
-	    {
-            var html = ToString();
-	        return string.IsNullOrEmpty(html);
-	    }
+            if (!string.IsNullOrEmpty(result))
+                result = string.Format("<ul{0}>", string.IsNullOrEmpty(_mainUlCssClass) ? "" : " class=\"" + _mainUlCssClass + "\"") + result + "</ul>";
 
+            return result;
+        }
+
+        /// <summary>
+        /// Get first individual page index
+        /// </summary>
+        /// <returns>Page index</returns>
         protected virtual int GetFirstIndividualPageIndex()
         {
-            if ((model.TotalPages < individualPagesDisplayedCount) ||
-                ((model.PageIndex - (individualPagesDisplayedCount / 2)) < 0))
-            {
+            if ((_model.TotalPages < _individualPagesDisplayedCount) || ((_model.PageIndex - (_individualPagesDisplayedCount / 2)) < 0))
                 return 0;
-            }
-            if ((model.PageIndex + (individualPagesDisplayedCount / 2)) >= model.TotalPages)
-            {
-                return (model.TotalPages - individualPagesDisplayedCount);
-            }
-            return (model.PageIndex - (individualPagesDisplayedCount / 2));
+
+            if ((_model.PageIndex + (_individualPagesDisplayedCount / 2)) >= _model.TotalPages)
+                return _model.TotalPages - _individualPagesDisplayedCount;
+
+            return _model.PageIndex - (_individualPagesDisplayedCount / 2);
         }
+
+        /// <summary>
+        /// Get last individual page index
+        /// </summary>
+        /// <returns>Page index</returns>
         protected virtual int GetLastIndividualPageIndex()
         {
-            int num = individualPagesDisplayedCount / 2;
-            if ((individualPagesDisplayedCount % 2) == 0)
-            {
+            var num = _individualPagesDisplayedCount / 2;
+            if ((_individualPagesDisplayedCount % 2) == 0)
                 num--;
-            }
-            if ((model.TotalPages < individualPagesDisplayedCount) ||
-                ((model.PageIndex + num) >= model.TotalPages))
-            {
-                return (model.TotalPages - 1);
-            }
-            if ((model.PageIndex - (individualPagesDisplayedCount / 2)) < 0)
-            {
-                return (individualPagesDisplayedCount - 1);
-            }
-            return (model.PageIndex + num);
+
+            if ((_model.TotalPages < _individualPagesDisplayedCount) || ((_model.PageIndex + num) >= _model.TotalPages))
+                return _model.TotalPages - 1;
+
+            if ((_model.PageIndex - (_individualPagesDisplayedCount / 2)) < 0)
+                return _individualPagesDisplayedCount - 1;
+
+            return _model.PageIndex + num;
         }
-		protected virtual string CreatePageLink(int pageNumber, string text, string cssClass)
-		{
+
+        /// <summary>
+        /// Create page link
+        /// </summary>
+        /// <param name="pageNumber">Page number</param>
+        /// <param name="text">Text</param>
+        /// <param name="cssClass">CSS class</param>
+        /// <returns>
+        /// A task that represents the asynchronous operation
+        /// The task result contains the link
+        /// </returns>
+		protected virtual async Task<string> CreatePageLinkAsync(int pageNumber, string text, string cssClass)
+        {
             var liBuilder = new TagBuilder("li");
-            if (!String.IsNullOrWhiteSpace(cssClass))
+            if (!string.IsNullOrWhiteSpace(cssClass))
                 liBuilder.AddCssClass(cssClass);
 
-			var aBuilder = new TagBuilder("a");
-            aBuilder.SetInnerText(text);
-            aBuilder.MergeAttribute("href", urlBuilder(pageNumber));
+            var aBuilder = new TagBuilder("a");
+            aBuilder.InnerHtml.AppendHtml(text);
+            aBuilder.MergeAttribute("data-page", pageNumber.ToString());
+            aBuilder.MergeAttribute("href", CreateDefaultUrl(pageNumber));
 
-            liBuilder.InnerHtml += aBuilder;
+            liBuilder.InnerHtml.AppendHtml(aBuilder);
+            return await liBuilder.RenderHtmlContentAsync();
+        }
 
-            return liBuilder.ToString(TagRenderMode.Normal);
-		}
+        /// <summary>
+        /// Create default URL
+        /// </summary>
+        /// <param name="pageNumber">Page number</param>
+        /// <returns>URL</returns>
         protected virtual string CreateDefaultUrl(int pageNumber)
-		{
-			var routeValues = new RouteValueDictionary();
+        {
+            var routeValues = new RouteValueDictionary();
 
             var parametersWithEmptyValues = new List<string>();
-			foreach (var key in viewContext.RequestContext.HttpContext.Request.QueryString.AllKeys.Where(key => key != null))
-			{
-                var value = viewContext.RequestContext.HttpContext.Request.QueryString[key];
-                if (renderEmptyParameters && String.IsNullOrEmpty(value))
-			    {
+            foreach (var key in ViewContext.HttpContext.Request.Query.Keys.Where(key => key != null))
+            {
+                var value = ViewContext.HttpContext.Request.Query[key].ToString();
+                if (_renderEmptyParameters && string.IsNullOrEmpty(value))
+                {
                     //we store query string parameters with empty values separately
                     //we need to do it because they are not properly processed in the UrlHelper.GenerateUrl method (dropped for some reasons)
                     parametersWithEmptyValues.Add(key);
-			    }
-			    else
+                }
+                else
                 {
-                    if (booleanParameterNames.Contains(key, StringComparer.InvariantCultureIgnoreCase))
+                    if (_booleanParameterNames.Contains(key, StringComparer.InvariantCultureIgnoreCase))
                     {
                         //little hack here due to ugly MVC implementation
                         //find more info here: http://www.mindstorminteractive.com/topics/jquery-fix-asp-net-mvc-checkbox-truefalse-value/
-                        if (!String.IsNullOrEmpty(value) && value.Equals("true,false", StringComparison.InvariantCultureIgnoreCase))
-                        {
+                        if (!string.IsNullOrEmpty(value) && value.Equals("true,false", StringComparison.InvariantCultureIgnoreCase))
                             value = "true";
-                        }
                     }
+
                     routeValues[key] = value;
-			    }
-			}
+                }
+            }
 
             if (pageNumber > 1)
-            {
-                routeValues[pageQueryName] = pageNumber;
-            }
+                routeValues[_queryParam] = pageNumber;
             else
             {
                 //SEO. we do not render pageindex query string parameter for the first page
-                if (routeValues.ContainsKey(pageQueryName))
-                {
-                    routeValues.Remove(pageQueryName);
-                }
+                if (routeValues.ContainsKey(_queryParam))
+                    routeValues.Remove(_queryParam);
             }
 
-			var url = UrlHelper.GenerateUrl(null, null, null, routeValues, RouteTable.Routes, viewContext.RequestContext, true);
-            if (renderEmptyParameters && parametersWithEmptyValues.Count > 0)
-            {
-                //we add such parameters manually because UrlHelper.GenerateUrl() ignores them
-                var webHelper = EngineContext.Current.Resolve<IWebHelper>();
-                foreach (var key in parametersWithEmptyValues)
-                {
-                    url = webHelper.ModifyQueryString(url, key + "=", null);
-                }
-            }
-			return url;
-		}
-	}
+            var webHelper = EngineContext.Current.Resolve<IWebHelper>();
+            var url = webHelper.GetThisPageUrl(false);
+            foreach (var routeValue in routeValues) 
+                url = webHelper.ModifyQueryString(url, routeValue.Key, routeValue.Value?.ToString());
+
+            if (_renderEmptyParameters && parametersWithEmptyValues.Any())
+                foreach (var key in parametersWithEmptyValues) 
+                    url = webHelper.ModifyQueryString(url, key);
+
+            return url;
+        }
+
+        #endregion
+    }
 }
